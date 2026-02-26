@@ -2,6 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use regex::Regex;
 use russh::client::{self, Msg};
 use russh::keys::ssh_key::HashAlg;
 use russh::keys::{decode_secret_key, PrivateKeyWithHashAlg};
@@ -168,6 +169,50 @@ impl Session {
         let data = format!("{command}\n");
         self.write(data.as_bytes()).await?;
         self.read_until_prompt(prompt, timeout_dur).await
+    }
+
+    pub async fn read_until_prompt_re(
+        &mut self,
+        prompt_re: &Regex,
+        timeout_dur: Duration,
+    ) -> Result<String> {
+        let mut buffer = String::new();
+
+        timeout(timeout_dur, async {
+            loop {
+                match self.reader.wait().await {
+                    Some(ChannelMsg::Data { data }) => {
+                        buffer.push_str(&String::from_utf8_lossy(&data));
+                        if prompt_re.is_match(buffer.trim_end()) {
+                            return Ok(buffer);
+                        }
+                    }
+                    Some(ChannelMsg::ExtendedData { data, .. }) => {
+                        buffer.push_str(&String::from_utf8_lossy(&data));
+                        if prompt_re.is_match(buffer.trim_end()) {
+                            return Ok(buffer);
+                        }
+                    }
+                    Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
+                        return Err(SshintoError::ChannelClosed);
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .map_err(|_| SshintoError::Timeout)?
+    }
+
+    pub async fn send_command_re(
+        &mut self,
+        command: &str,
+        prompt_re: &Regex,
+        timeout_dur: Duration,
+    ) -> Result<String> {
+        let data = format!("{command}\n");
+        self.write(data.as_bytes()).await?;
+        self.read_until_prompt_re(prompt_re, timeout_dur).await
     }
 
     /// Read all data arriving within the given duration. Useful for diagnostics.

@@ -1,4 +1,4 @@
-use lib_sshinto::{ConnectConfig, Credential, Session};
+use lib_sshinto::{ConnectConfig, Credential, DeviceKind, Session};
 use std::time::Duration;
 
 #[tokio::main]
@@ -26,18 +26,19 @@ async fn main() {
         }
     };
 
-    let prompt = "dev01#";
+    let profile = DeviceKind::CiscoIos.profile();
+    let prompt_re = profile.prompt_regex();
 
     // Drain any leftover and get to a clean prompt
     let _ = session.write(b"\n").await;
     let _ = session
-        .read_until_prompt(prompt, Duration::from_secs(3))
+        .read_until_prompt_re(&prompt_re, Duration::from_secs(3))
         .await;
 
     // Disable paging so long output doesn't get stuck at --More--
     println!("Disabling paging...");
     match session
-        .send_command("terminal length 0", prompt, Duration::from_secs(5))
+        .send_command_re(profile.paging_disable, &prompt_re, Duration::from_secs(5))
         .await
     {
         Ok(_) => println!("Paging disabled.\n"),
@@ -47,7 +48,7 @@ async fn main() {
     // show version
     println!("=== show version ===");
     match session
-        .send_command("show version", prompt, Duration::from_secs(10))
+        .send_command_re("show version", &prompt_re, Duration::from_secs(10))
         .await
     {
         Ok(output) => println!("{output}"),
@@ -57,7 +58,7 @@ async fn main() {
     // show ip interface brief
     println!("\n=== show ip interface brief ===");
     match session
-        .send_command("show ip interface brief", prompt, Duration::from_secs(10))
+        .send_command_re("show ip interface brief", &prompt_re, Duration::from_secs(10))
         .await
     {
         Ok(output) => println!("{output}"),
@@ -67,9 +68,9 @@ async fn main() {
     // show running-config hostname
     println!("\n=== show running-config | include hostname ===");
     match session
-        .send_command(
+        .send_command_re(
             "show running-config | include hostname",
-            prompt,
+            &prompt_re,
             Duration::from_secs(10),
         )
         .await
