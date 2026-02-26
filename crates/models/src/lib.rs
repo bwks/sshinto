@@ -1,6 +1,8 @@
+use clap::ValueEnum;
 use regex::Regex;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[clap(rename_all = "snake_case")]
 pub enum DeviceKind {
     CiscoIos,
     CiscoIosXr,

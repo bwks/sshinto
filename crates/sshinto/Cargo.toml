@@ -5,4 +5,7 @@ edition.workspace = true
 
 [dependencies]
 lib_sshinto = { path = "../lib_sshinto" }
+models = { path = "../models" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+clap = { version = "4", features = ["derive"] }
+rpassword = "5"
