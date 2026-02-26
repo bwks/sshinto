@@ -1,0 +1,2 @@
+# sshinto
+SSH on crack
