@@ -5,3 +5,4 @@ edition.workspace = true
 
 [dependencies]
 lib_sshinto = { path = "../lib_sshinto" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

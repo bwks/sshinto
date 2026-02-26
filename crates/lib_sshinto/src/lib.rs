@@ -1,13 +1,6 @@
-pub fn greet() -> &'static str {
-    "Hello from lib_sshinto!"
-}
+mod error;
+mod handler;
+mod session;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_greet() {
-        assert_eq!(greet(), "Hello from lib_sshinto!");
-    }
-}
+pub use error::{Result, SshintoError};
+pub use session::{ConnectConfig, Credential, Session};
