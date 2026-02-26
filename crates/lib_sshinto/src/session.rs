@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,6 +18,9 @@ pub struct ConnectConfig {
     pub term: String,
     pub cols: u32,
     pub rows: u32,
+    /// Enable legacy SSH algorithms (e.g. diffie-hellman-group14-sha1) for
+    /// older devices that don't support modern key exchange.
+    pub legacy_crypto: bool,
 }
 
 impl Default for ConnectConfig {
@@ -26,6 +30,7 @@ impl Default for ConnectConfig {
             term: "xterm".into(),
             cols: 200,
             rows: 48,
+            legacy_crypto: false,
         }
     }
 }
@@ -56,7 +61,20 @@ impl Session {
         credential: Credential,
         config: ConnectConfig,
     ) -> Result<Self> {
-        let ssh_config = Arc::new(client::Config::default());
+        let ssh_config = if config.legacy_crypto {
+            let mut kex = russh::Preferred::default().kex.into_owned();
+            kex.push(russh::kex::DH_G14_SHA1);
+            kex.push(russh::kex::DH_GEX_SHA1);
+            Arc::new(client::Config {
+                preferred: russh::Preferred {
+                    kex: Cow::Owned(kex),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+        } else {
+            Arc::new(client::Config::default())
+        };
         let addr = format!("{host}:{port}");
 
         let mut handle = timeout(config.timeout, client::connect(ssh_config, &*addr, SshHandler))
@@ -64,6 +82,7 @@ impl Session {
             .map_err(|_| SshintoError::Timeout)?
             .map_err(SshintoError::Ssh)?;
 
+        let legacy_crypto = config.legacy_crypto;
         let auth_result = match credential {
             Credential::Password(password) => {
                 timeout(
@@ -79,7 +98,7 @@ impl Session {
                 passphrase,
             } => {
                 let key = decode_secret_key(&key_pem, passphrase.as_deref())?;
-                let hash_alg = hash_alg_for_key(&key);
+                let hash_alg = hash_alg_for_key(&key, legacy_crypto);
                 let key = PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg);
                 timeout(
                     config.timeout,
@@ -92,7 +111,7 @@ impl Session {
             Credential::PrivateKeyFile { path, passphrase } => {
                 let pem = std::fs::read_to_string(Path::new(&path))?;
                 let key = decode_secret_key(&pem, passphrase.as_deref())?;
-                let hash_alg = hash_alg_for_key(&key);
+                let hash_alg = hash_alg_for_key(&key, legacy_crypto);
                 let key = PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg);
                 timeout(
                     config.timeout,
@@ -245,8 +264,11 @@ impl Session {
     }
 }
 
-fn hash_alg_for_key(key: &russh::keys::PrivateKey) -> Option<HashAlg> {
-    if key.algorithm().is_rsa() {
+fn hash_alg_for_key(key: &russh::keys::PrivateKey, legacy_crypto: bool) -> Option<HashAlg> {
+    if key.algorithm().is_rsa() && !legacy_crypto {
+        // Modern devices expect rsa-sha2-256.
+        // When legacy_crypto is true, return None to use the original ssh-rsa (SHA-1) signature
+        // scheme, which older devices (e.g. legacy Cisco IOS) require.
         Some(HashAlg::Sha256)
     } else {
         None

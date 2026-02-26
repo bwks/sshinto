@@ -11,7 +11,10 @@ async fn main() {
         path: "./sherpa_ssh_key".to_string(),
         passphrase: None,
     };
-    let config = ConnectConfig::default();
+    let config = ConnectConfig {
+        legacy_crypto: true,
+        ..Default::default()
+    };
 
     println!("Connecting to {host}:{port} as {username}...");
 
@@ -58,7 +61,11 @@ async fn main() {
     // show ip interface brief
     println!("\n=== show ip interface brief ===");
     match session
-        .send_command_re("show ip interface brief", &prompt_re, Duration::from_secs(10))
+        .send_command_re(
+            "show ip interface brief",
+            &prompt_re,
+            Duration::from_secs(10),
+        )
         .await
     {
         Ok(output) => println!("{output}"),
