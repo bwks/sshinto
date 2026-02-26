@@ -1,0 +1,7 @@
+[package]
+name = "sshinto"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+lib_sshinto = { path = "../lib_sshinto" }
