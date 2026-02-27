@@ -85,7 +85,7 @@ async fn run(args: ResolvedArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     for cmd in &args.commands {
         eprintln!("\n--- {} ---", cmd);
-        match session.send_command_re(cmd, &prompt_re, timeout).await {
+        match session.send_command_clean(cmd, &prompt_re, timeout).await {
             Ok(output) => print!("{output}"),
             Err(e) => eprintln!("Error running '{}': {e}", cmd),
         }

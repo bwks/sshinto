@@ -234,6 +234,16 @@ impl Session {
         self.read_until_prompt_re(prompt_re, timeout_dur).await
     }
 
+    pub async fn send_command_clean(
+        &mut self,
+        command: &str,
+        prompt_re: &Regex,
+        timeout_dur: Duration,
+    ) -> Result<String> {
+        let raw = self.send_command_re(command, prompt_re, timeout_dur).await?;
+        Ok(crate::output::strip_command_output(&raw, command, prompt_re))
+    }
+
     /// Read all data arriving within the given duration. Useful for diagnostics.
     pub async fn read_for(&mut self, duration: Duration) -> String {
         let mut buffer = String::new();

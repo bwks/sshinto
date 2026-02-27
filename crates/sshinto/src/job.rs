@@ -267,7 +267,7 @@ async fn run_single_host_inner(
 
     for cmd in &args.commands {
         buf.push_str(&format!("\n--- {cmd} ---\n"));
-        match session.send_command_re(cmd, &prompt_re, timeout_dur).await {
+        match session.send_command_clean(cmd, &prompt_re, timeout_dur).await {
             Ok(output) => buf.push_str(&output),
             Err(e) => buf.push_str(&format!("Error running '{cmd}': {e}\n")),
         }
