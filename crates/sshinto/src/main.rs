@@ -1,7 +1,9 @@
 mod cli;
+mod config;
 
-use cli::{Cli, Commands, RunArgs};
 use clap::Parser;
+use cli::{Cli, Commands};
+use config::ResolvedArgs;
 use lib_sshinto::{ConnectConfig, Credential, Session};
 use std::time::Duration;
 
@@ -10,7 +12,22 @@ async fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::Run(args) => run(args).await,
+        Commands::Run(args) => {
+            let config = match config::Config::load() {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
+            };
+            match config::resolve(&args, &config) {
+                Ok(resolved) => run(resolved).await,
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
     };
 
     if let Err(e) = result {
@@ -19,7 +36,7 @@ async fn main() {
     }
 }
 
-async fn run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
+async fn run(args: ResolvedArgs) -> Result<(), Box<dyn std::error::Error>> {
     let credential = if let Some(ref key_path) = args.key_file {
         Credential::PrivateKeyFile {
             path: key_path.clone(),

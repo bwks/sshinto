@@ -21,17 +21,20 @@ pub enum Commands {
 
 #[derive(Parser)]
 pub struct RunArgs {
+    /// Named host from config file
+    pub name: Option<String>,
+
     /// Target host (IP or hostname)
     #[arg(short = 'h', long)]
-    pub host: String,
+    pub host: Option<String>,
 
     /// SSH port
-    #[arg(short = 'p', long, default_value_t = 22)]
-    pub port: u16,
+    #[arg(short = 'p', long)]
+    pub port: Option<u16>,
 
     /// Username
     #[arg(short = 'U', long)]
-    pub username: String,
+    pub username: Option<String>,
 
     /// Password (omit to prompt interactively)
     #[arg(short = 'P', long)]
@@ -47,17 +50,17 @@ pub struct RunArgs {
 
     /// Device type
     #[arg(short = 'd', long)]
-    pub device_type: DeviceKind,
+    pub device_type: Option<DeviceKind>,
 
     /// Enable legacy SSH crypto algorithms
     #[arg(long)]
     pub legacy_crypto: bool,
 
     /// Command to execute (repeatable)
-    #[arg(short = 'c', long = "command", required = true)]
+    #[arg(short = 'c', long = "command")]
     pub commands: Vec<String>,
 
     /// Command timeout in seconds
-    #[arg(short = 't', long, default_value_t = 10)]
-    pub timeout: u64,
+    #[arg(short = 't', long)]
+    pub timeout: Option<u64>,
 }

@@ -25,5 +25,8 @@ target
 
 /target
 
+# Config File
+sshinto.toml
+
 # test devices
 sherpa_ssh*
