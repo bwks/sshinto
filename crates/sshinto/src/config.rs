@@ -50,6 +50,7 @@ pub struct Defaults {
     pub timeout: Option<u64>,
     pub legacy_crypto: Option<bool>,
     pub device_type: Option<DeviceKind>,
+    pub output_dir: Option<String>,
 }
 
 // ── Resolved args ───────────────────────────────────────────────────
@@ -66,6 +67,7 @@ pub struct ResolvedArgs {
     pub legacy_crypto: bool,
     pub commands: Vec<String>,
     pub timeout: u64,
+    pub output_dir: Option<String>,
 }
 
 // ── Loading ─────────────────────────────────────────────────────────
@@ -131,6 +133,7 @@ pub fn resolve(cli: &RunArgs, config: &Config) -> Result<ResolvedArgs, ConfigErr
     let password = pick!(cli.password, defaults.password);
     let key_file = pick!(cli.key_file, defaults.key_file);
     let key_passphrase = pick!(cli.key_passphrase, defaults.key_passphrase);
+    let output_dir = cli.output_dir.clone().or_else(|| config.defaults.output_dir.clone());
 
     if cli.commands.is_empty() {
         return Err(ConfigError::MissingField("command (-c)"));
@@ -147,6 +150,7 @@ pub fn resolve(cli: &RunArgs, config: &Config) -> Result<ResolvedArgs, ConfigErr
         legacy_crypto,
         commands: cli.commands.clone(),
         timeout,
+        output_dir,
     })
 }
 
@@ -177,6 +181,7 @@ timeout = 10
             legacy_crypto: false,
             commands: vec!["show version".into()],
             timeout: None,
+            output_dir: None,
         }
     }
 
@@ -194,6 +199,7 @@ timeout = 10
             legacy_crypto: false,
             commands: vec!["show version".into()],
             timeout: Some(5),
+            output_dir: None,
         };
 
         let r = resolve(&cli, &config).expect("should resolve");

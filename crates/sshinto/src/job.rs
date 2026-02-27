@@ -8,6 +8,7 @@ use tokio::sync::Semaphore;
 
 use crate::cli::JobArgs;
 use crate::config::{Config, ConfigError, Defaults, ResolvedArgs};
+use crate::writer;
 
 // ── Jobfile structs ─────────────────────────────────────────────────
 
@@ -32,6 +33,7 @@ pub struct JobDefaults {
     pub device_type: Option<DeviceKind>,
     #[serde(default)]
     pub commands: Vec<String>,
+    pub output_dir: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -199,6 +201,8 @@ fn resolve_host(
         _ => commands,
     };
 
+    let output_dir = defaults.output_dir.clone();
+
     Ok(ResolvedArgs {
         host,
         port,
@@ -210,6 +214,7 @@ fn resolve_host(
         legacy_crypto,
         commands: resolved_commands.to_vec(),
         timeout,
+        output_dir,
     })
 }
 
@@ -218,16 +223,19 @@ fn resolve_host(
 async fn run_single_host(
     name: String,
     args: ResolvedArgs,
+    output_dir: Option<String>,
 ) -> (String, String, Result<String, Box<dyn std::error::Error + Send + Sync>>) {
     let host = args.host.clone();
-    match run_single_host_inner(args).await {
+    match run_single_host_inner(&name, args, output_dir).await {
         Ok(output) => (name, host, Ok(output)),
         Err(e) => (name, host, Err(e)),
     }
 }
 
 async fn run_single_host_inner(
+    name: &str,
     args: ResolvedArgs,
+    output_dir: Option<String>,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let credential = if let Some(ref key_path) = args.key_file {
         Credential::PrivateKeyFile {
@@ -270,6 +278,19 @@ async fn run_single_host_inner(
         match session.send_command_clean(cmd, &prompt_re, timeout_dur).await {
             Ok(output) => buf.push_str(&output),
             Err(e) => buf.push_str(&format!("Error running '{cmd}': {e}\n")),
+        }
+    }
+
+    if let Some(ref base) = output_dir {
+        match writer::build_output_path(base, name) {
+            Ok(path) => {
+                if let Err(e) = writer::write_output(&path, &buf) {
+                    eprintln!("[{name}] Error writing output file: {e}");
+                } else {
+                    eprintln!("[{name}] Output saved to {}", path.display());
+                }
+            }
+            Err(e) => eprintln!("[{name}] Error creating output directory: {e}"),
         }
     }
 
@@ -322,12 +343,19 @@ pub async fn run_job(job_args: &JobArgs) -> Result<(), Box<dyn std::error::Error
         resolved.push((entry.name.clone(), args));
     }
 
+    // Resolve output_dir: CLI flag takes priority over job defaults.
+    let output_dir = job_args
+        .output_dir
+        .clone()
+        .or_else(|| job.defaults.output_dir.clone());
+
     // Spawn tasks with optional concurrency limit.
     let semaphore = job_args.workers.map(|w| Arc::new(Semaphore::new(w)));
 
     let mut handles = Vec::with_capacity(resolved.len());
     for (name, args) in resolved {
         let sem = semaphore.clone();
+        let out_dir = output_dir.clone();
         handles.push(tokio::spawn(async move {
             let _permit = match &sem {
                 Some(s) => Some(
@@ -337,7 +365,7 @@ pub async fn run_job(job_args: &JobArgs) -> Result<(), Box<dyn std::error::Error
                 ),
                 None => None,
             };
-            run_single_host(name, args).await
+            run_single_host(name, args, out_dir).await
         }));
     }
 

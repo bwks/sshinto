@@ -62,6 +62,10 @@ pub struct RunArgs {
     /// Command timeout in seconds
     #[arg(short = 't', long)]
     pub timeout: Option<u64>,
+
+    /// Save output to file (default: output/{host}/{timestamp}/output.txt)
+    #[arg(short = 'o', long)]
+    pub output_dir: Option<String>,
 }
 
 #[derive(Parser)]
@@ -72,4 +76,8 @@ pub struct JobArgs {
     /// Max concurrent connections
     #[arg(long)]
     pub workers: Option<usize>,
+
+    /// Save per-host output to files (default: output/{name}/{timestamp}/output.txt)
+    #[arg(short = 'o', long)]
+    pub output_dir: Option<String>,
 }

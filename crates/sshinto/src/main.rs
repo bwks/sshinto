@@ -1,6 +1,7 @@
 mod cli;
 mod config;
 mod job;
+mod writer;
 
 use clap::Parser;
 use cli::{Cli, Commands};
@@ -83,16 +84,38 @@ async fn run(args: ResolvedArgs) -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => eprintln!("Warning: could not disable paging: {e}"),
     }
 
+    let mut buf = String::new();
+
     for cmd in &args.commands {
         eprintln!("\n--- {} ---", cmd);
         match session.send_command_clean(cmd, &prompt_re, timeout).await {
-            Ok(output) => print!("{output}"),
-            Err(e) => eprintln!("Error running '{}': {e}", cmd),
+            Ok(output) => {
+                print!("{output}");
+                buf.push_str(&output);
+            }
+            Err(e) => {
+                let msg = format!("Error running '{}': {e}\n", cmd);
+                eprint!("{msg}");
+                buf.push_str(&msg);
+            }
         }
     }
 
     if let Err(e) = session.close().await {
         eprintln!("Close error: {e}");
+    }
+
+    if let Some(ref base) = args.output_dir {
+        match writer::build_output_path(base, &args.host) {
+            Ok(path) => {
+                if let Err(e) = writer::write_output(&path, &buf) {
+                    eprintln!("Error writing output file: {e}");
+                } else {
+                    eprintln!("Output saved to {}", path.display());
+                }
+            }
+            Err(e) => eprintln!("Error creating output directory: {e}"),
+        }
     }
 
     Ok(())

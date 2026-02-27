@@ -14,4 +14,12 @@ multiple network vendors and linux/bsd hosts.
 - Never use `.unwrap()` except in tests.
 
 ## Testing
-You can SSH to a device on `172.31.0.11` with the username `sherpa` and the password `Everest1953!`. Use this device to test the implementation.
+You can SSH to the below devices with the username `sherpa` and the password `Everest1953!`.
+You can also use the username `sherpa` and ssh key `sherpa_ssh_key`
+Use these device to test the implementation.
+
+### Test Devices
+- dev01 | Cisco IOS | 172.31.0.11
+- dev02 | Cisco IOS-XE | 172.31.0.12
+- dev03 | Arista EOS | 172.31.0.13
+- dev04 | Arista EOS | 172.31.0.14

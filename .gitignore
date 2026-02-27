@@ -28,6 +28,7 @@ target
 # Config Files
 sshinto.toml
 *_job.toml
+output/
 
 # test devices
 sherpa_ssh*
