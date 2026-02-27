@@ -17,13 +17,12 @@ pub struct Cli {
 pub enum Commands {
     /// Run commands on a device
     Run(RunArgs),
+    /// Run commands on multiple hosts from a jobfile
+    Job(JobArgs),
 }
 
 #[derive(Parser)]
 pub struct RunArgs {
-    /// Named host from config file
-    pub name: Option<String>,
-
     /// Target host (IP or hostname)
     #[arg(short = 'h', long)]
     pub host: Option<String>,
@@ -63,4 +62,14 @@ pub struct RunArgs {
     /// Command timeout in seconds
     #[arg(short = 't', long)]
     pub timeout: Option<u64>,
+}
+
+#[derive(Parser)]
+pub struct JobArgs {
+    /// Path to jobfile
+    pub file: String,
+
+    /// Max concurrent connections
+    #[arg(long)]
+    pub workers: Option<usize>,
 }

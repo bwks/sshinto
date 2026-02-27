@@ -32,28 +32,6 @@ key_file = "~/.ssh/id_ed25519"
 timeout = 10
 legacy_crypto = false
 port = 22
-
-[hosts.lab-router]
-host = "172.31.0.11"
-device_type = "cisco_ios"
-legacy_crypto = true
-
-[hosts.core-switch]
-host = "10.0.1.1"
-port = 2222
-device_type = "arista_eos"
-username = "admin"
-key_file = "~/.ssh/arista_key"
-```
-
-Then reference hosts by name:
-
-```bash
-# Named host — only commands on CLI
-sshinto run lab-router -c 'show version'
-
-# Named host with a CLI override
-sshinto run lab-router -U different_user -c 'show version'
 ```
 
 ### Config merge priority
@@ -61,10 +39,73 @@ sshinto run lab-router -U different_user -c 'show version'
 Values are resolved in this order (highest wins):
 
 ```
-CLI flag  →  host entry  →  [defaults]  →  hardcoded default
+CLI flag  →  [defaults]  →  hardcoded default
 ```
 
 Commands (`-c`) are always specified on the CLI.
+
+### Running jobs across multiple hosts
+
+Create a jobfile (e.g. `upgrade.toml`):
+
+```toml
+[defaults]
+username = "sherpa"
+device_type = "cisco_ios"
+timeout = 10
+key_file = "~/.ssh/id_ed25519"
+
+commands = [
+    "show version",
+    "show ip route",
+]
+
+[[hosts]]
+name = "lab-router"
+host = "172.31.0.11"
+legacy_crypto = true
+
+[[hosts]]
+name = "core-switch"
+host = "10.0.1.1"
+device_type = "arista_eos"
+username = "admin"
+```
+
+Run the job:
+
+```bash
+sshinto job ./upgrade.toml
+```
+
+Limit concurrency:
+
+```bash
+sshinto job ./upgrade.toml --workers 5
+```
+
+Each host's output is grouped together, followed by a summary:
+
+```
+=== lab-router (172.31.0.11) ===
+
+--- show version ---
+Cisco IOS Software...
+
+--- show ip route ---
+...
+
+=== core-switch (10.0.1.1) ===
+
+--- show version ---
+...
+
+=== Summary ===
+lab-router: ok
+core-switch: error - authentication failed
+```
+
+Host entries inherit from `[defaults]` and can override any field. If any host requires password authentication and no password is set, you'll be prompted once.
 
 ## Supported device types
 

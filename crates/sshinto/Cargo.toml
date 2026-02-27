@@ -6,7 +6,7 @@ edition.workspace = true
 [dependencies]
 lib_sshinto = { path = "../lib_sshinto" }
 models = { path = "../models", features = ["serde"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"

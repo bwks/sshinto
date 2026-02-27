@@ -1,6 +1,5 @@
 use models::DeviceKind;
 use serde::Deserialize;
-use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 
@@ -35,25 +34,10 @@ impl std::error::Error for ConfigError {}
 pub struct Config {
     #[serde(default)]
     pub defaults: Defaults,
-    #[serde(default)]
-    pub hosts: HashMap<String, HostEntry>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 pub struct Defaults {
-    pub username: Option<String>,
-    pub password: Option<String>,
-    pub key_file: Option<String>,
-    pub key_passphrase: Option<String>,
-    pub port: Option<u16>,
-    pub timeout: Option<u64>,
-    pub legacy_crypto: Option<bool>,
-    pub device_type: Option<DeviceKind>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct HostEntry {
-    pub host: String,
     pub username: Option<String>,
     pub password: Option<String>,
     pub key_file: Option<String>,
@@ -110,65 +94,39 @@ fn home_dir() -> Option<PathBuf> {
 
 // ── Resolution ──────────────────────────────────────────────────────
 
-/// Merge CLI → host entry → defaults → hardcoded defaults.
+/// Merge CLI → defaults → hardcoded defaults.
 pub fn resolve(cli: &RunArgs, config: &Config) -> Result<ResolvedArgs, ConfigError> {
-    let host_entry = cli.name.as_ref().and_then(|n| config.hosts.get(n.as_str()));
-
-    // Helper macro: first non-None in order wins
     macro_rules! pick {
-        ($cli_field:expr, $host:ident . $field:ident, $def:ident . $dfield:ident) => {
+        ($cli_field:expr, $def:ident . $dfield:ident) => {
             $cli_field
                 .clone()
-                .or_else(|| host_entry.and_then(|h| h.$field.clone()))
                 .or_else(|| config.defaults.$dfield.clone())
         };
     }
 
-    let host = cli
-        .host
-        .clone()
-        .or_else(|| host_entry.map(|h| h.host.clone()))
-        .ok_or(ConfigError::MissingField("host"))?;
+    let host = cli.host.clone().ok_or(ConfigError::MissingField("host"))?;
 
-    let username = pick!(cli.username, host.username, defaults.username)
-        .ok_or(ConfigError::MissingField("username"))?;
+    let username =
+        pick!(cli.username, defaults.username).ok_or(ConfigError::MissingField("username"))?;
 
     let device_type = cli
         .device_type
-        .or_else(|| host_entry.and_then(|h| h.device_type))
         .or(config.defaults.device_type)
         .ok_or(ConfigError::MissingField("device_type"))?;
 
-    let port = cli
-        .port
-        .or_else(|| host_entry.and_then(|h| h.port))
-        .or(config.defaults.port)
-        .unwrap_or(22);
+    let port = cli.port.or(config.defaults.port).unwrap_or(22);
 
-    let timeout = cli
-        .timeout
-        .or_else(|| host_entry.and_then(|h| h.timeout))
-        .or(config.defaults.timeout)
-        .unwrap_or(10);
+    let timeout = cli.timeout.or(config.defaults.timeout).unwrap_or(10);
 
-    // legacy_crypto: CLI flag is `bool` (default false). It acts as override
-    // only when explicitly set (true). Otherwise fall through to config.
     let legacy_crypto = if cli.legacy_crypto {
         true
     } else {
-        host_entry
-            .and_then(|h| h.legacy_crypto)
-            .or(config.defaults.legacy_crypto)
-            .unwrap_or(false)
+        config.defaults.legacy_crypto.unwrap_or(false)
     };
 
-    let password = pick!(cli.password, host.password, defaults.password);
-    let key_file = pick!(cli.key_file, host.key_file, defaults.key_file);
-    let key_passphrase = pick!(
-        cli.key_passphrase,
-        host.key_passphrase,
-        defaults.key_passphrase
-    );
+    let password = pick!(cli.password, defaults.password);
+    let key_file = pick!(cli.key_file, defaults.key_file);
+    let key_passphrase = pick!(cli.key_passphrase, defaults.key_passphrase);
 
     if cli.commands.is_empty() {
         return Err(ConfigError::MissingField("command (-c)"));
@@ -199,24 +157,12 @@ mod tests {
 [defaults]
 username = "sherpa"
 timeout = 10
-
-[hosts.lab-router]
-host = "172.31.0.11"
-device_type = "cisco_ios"
-legacy_crypto = true
-
-[hosts.core-switch]
-host = "10.0.1.1"
-port = 2222
-device_type = "arista_eos"
-username = "admin"
 "#;
         toml::from_str(toml_str).unwrap()
     }
 
     fn empty_cli() -> RunArgs {
         RunArgs {
-            name: None,
             host: None,
             port: None,
             username: None,
@@ -231,38 +177,9 @@ username = "admin"
     }
 
     #[test]
-    fn resolve_named_host() {
-        let config = sample_config();
-        let mut cli = empty_cli();
-        cli.name = Some("lab-router".into());
-
-        let r = resolve(&cli, &config).unwrap();
-        assert_eq!(r.host, "172.31.0.11");
-        assert_eq!(r.username, "sherpa"); // from defaults
-        assert_eq!(r.device_type, DeviceKind::CiscoIos);
-        assert!(r.legacy_crypto);
-        assert_eq!(r.port, 22);
-        assert_eq!(r.timeout, 10);
-    }
-
-    #[test]
-    fn cli_overrides_host_entry() {
-        let config = sample_config();
-        let mut cli = empty_cli();
-        cli.name = Some("lab-router".into());
-        cli.username = Some("override_user".into());
-        cli.port = Some(2222);
-
-        let r = resolve(&cli, &config).unwrap();
-        assert_eq!(r.username, "override_user");
-        assert_eq!(r.port, 2222);
-    }
-
-    #[test]
     fn fully_explicit_cli() {
         let config = Config::default();
         let cli = RunArgs {
-            name: None,
             host: Some("1.2.3.4".into()),
             port: Some(22),
             username: Some("admin".into()),
@@ -275,10 +192,36 @@ username = "admin"
             timeout: Some(5),
         };
 
-        let r = resolve(&cli, &config).unwrap();
+        let r = resolve(&cli, &config).expect("should resolve");
         assert_eq!(r.host, "1.2.3.4");
         assert_eq!(r.username, "admin");
         assert_eq!(r.timeout, 5);
+    }
+
+    #[test]
+    fn defaults_fill_gaps() {
+        let config = sample_config();
+        let mut cli = empty_cli();
+        cli.host = Some("10.0.0.1".into());
+        cli.device_type = Some(DeviceKind::CiscoIos);
+
+        let r = resolve(&cli, &config).expect("should resolve");
+        assert_eq!(r.username, "sherpa"); // from defaults
+        assert_eq!(r.timeout, 10); // from defaults
+    }
+
+    #[test]
+    fn cli_overrides_defaults() {
+        let config = sample_config();
+        let mut cli = empty_cli();
+        cli.host = Some("10.0.0.1".into());
+        cli.device_type = Some(DeviceKind::CiscoIos);
+        cli.username = Some("override_user".into());
+        cli.port = Some(2222);
+
+        let r = resolve(&cli, &config).expect("should resolve");
+        assert_eq!(r.username, "override_user");
+        assert_eq!(r.port, 2222);
     }
 
     #[test]
@@ -293,7 +236,8 @@ username = "admin"
     fn missing_commands_errors() {
         let config = sample_config();
         let mut cli = empty_cli();
-        cli.name = Some("lab-router".into());
+        cli.host = Some("10.0.0.1".into());
+        cli.device_type = Some(DeviceKind::CiscoIos);
         cli.commands = vec![];
 
         let err = resolve(&cli, &config).unwrap_err();
@@ -301,14 +245,9 @@ username = "admin"
     }
 
     #[test]
-    fn parse_config_toml() {
+    fn parse_defaults_only_config() {
         let config = sample_config();
         assert_eq!(config.defaults.username.as_deref(), Some("sherpa"));
-        assert_eq!(config.hosts.len(), 2);
-        assert_eq!(config.hosts["lab-router"].host, "172.31.0.11");
-        assert_eq!(
-            config.hosts["core-switch"].device_type,
-            Some(DeviceKind::AristaEos)
-        );
+        assert_eq!(config.defaults.timeout, Some(10));
     }
 }

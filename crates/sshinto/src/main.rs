@@ -1,5 +1,6 @@
 mod cli;
 mod config;
+mod job;
 
 use clap::Parser;
 use cli::{Cli, Commands};
@@ -28,6 +29,7 @@ async fn main() {
                 }
             }
         }
+        Commands::Job(args) => job::run_job(&args).await,
     };
 
     if let Err(e) = result {
