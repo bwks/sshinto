@@ -66,6 +66,30 @@ pub struct RunArgs {
     /// Save output to file (default: output/{host}/{timestamp}/output.txt)
     #[arg(short = 'o', long)]
     pub output_dir: Option<String>,
+
+    /// Jump host (user@host:port)
+    #[arg(short = 'J', long)]
+    pub jumphost: Option<String>,
+
+    /// Jump host username (overrides username parsed from -J spec)
+    #[arg(long)]
+    pub jumphost_username: Option<String>,
+
+    /// Jump host password (omit to prompt or use key)
+    #[arg(long)]
+    pub jumphost_password: Option<String>,
+
+    /// Jump host SSH key file
+    #[arg(long)]
+    pub jumphost_key_file: Option<String>,
+
+    /// Jump host key passphrase
+    #[arg(long)]
+    pub jumphost_key_passphrase: Option<String>,
+
+    /// Enable legacy crypto for jump host
+    #[arg(long)]
+    pub jumphost_legacy_crypto: bool,
 }
 
 #[derive(Parser)]
@@ -80,4 +104,28 @@ pub struct JobArgs {
     /// Save per-host output to files (default: output/{name}/{timestamp}/output.txt)
     #[arg(short = 'o', long)]
     pub output_dir: Option<String>,
+
+    /// Jump host (user@host:port), overrides jobfile
+    #[arg(short = 'J', long)]
+    pub jumphost: Option<String>,
+
+    /// Jump host username (overrides username parsed from -J spec)
+    #[arg(long)]
+    pub jumphost_username: Option<String>,
+
+    /// Jump host password
+    #[arg(long)]
+    pub jumphost_password: Option<String>,
+
+    /// Jump host SSH key file
+    #[arg(long)]
+    pub jumphost_key_file: Option<String>,
+
+    /// Jump host key passphrase
+    #[arg(long)]
+    pub jumphost_key_passphrase: Option<String>,
+
+    /// Enable legacy crypto for jump host
+    #[arg(long)]
+    pub jumphost_legacy_crypto: bool,
 }

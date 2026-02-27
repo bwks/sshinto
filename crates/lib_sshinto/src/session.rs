@@ -13,6 +13,14 @@ use tokio::time::timeout;
 use crate::error::{Result, SshintoError};
 use crate::handler::SshHandler;
 
+pub struct JumpHost {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub credential: Credential,
+    pub legacy_crypto: bool,
+}
+
 pub struct ConnectConfig {
     pub timeout: Duration,
     pub term: String,
@@ -21,6 +29,8 @@ pub struct ConnectConfig {
     /// Enable legacy SSH algorithms (e.g. diffie-hellman-group14-sha1) for
     /// older devices that don't support modern key exchange.
     pub legacy_crypto: bool,
+    /// Optional jump host to connect through.
+    pub jumphost: Option<JumpHost>,
 }
 
 impl Default for ConnectConfig {
@@ -31,6 +41,7 @@ impl Default for ConnectConfig {
             cols: 200,
             rows: 48,
             legacy_crypto: false,
+            jumphost: None,
         }
     }
 }
@@ -49,8 +60,81 @@ pub enum Credential {
 
 pub struct Session {
     handle: client::Handle<SshHandler>,
+    _jump_handle: Option<client::Handle<SshHandler>>,
     reader: russh::ChannelReadHalf,
     writer: russh::ChannelWriteHalf<Msg>,
+}
+
+fn build_ssh_config(legacy_crypto: bool) -> Arc<client::Config> {
+    if legacy_crypto {
+        let mut kex = russh::Preferred::default().kex.into_owned();
+        kex.push(russh::kex::DH_G14_SHA1);
+        kex.push(russh::kex::DH_GEX_SHA1);
+        Arc::new(client::Config {
+            preferred: russh::Preferred {
+                kex: Cow::Owned(kex),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+    } else {
+        Arc::new(client::Config::default())
+    }
+}
+
+async fn authenticate(
+    handle: &mut client::Handle<SshHandler>,
+    username: &str,
+    credential: Credential,
+    legacy_crypto: bool,
+    timeout_dur: Duration,
+) -> Result<()> {
+    let auth_result = match credential {
+        Credential::Password(password) => {
+            timeout(
+                timeout_dur,
+                handle.authenticate_password(username, password),
+            )
+            .await
+            .map_err(|_| SshintoError::Timeout)?
+            .map_err(SshintoError::Ssh)?
+        }
+        Credential::PrivateKey {
+            key_pem,
+            passphrase,
+        } => {
+            let key = decode_secret_key(&key_pem, passphrase.as_deref())?;
+            let hash_alg = hash_alg_for_key(&key, legacy_crypto);
+            let key = PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg);
+            timeout(
+                timeout_dur,
+                handle.authenticate_publickey(username, key),
+            )
+            .await
+            .map_err(|_| SshintoError::Timeout)?
+            .map_err(SshintoError::Ssh)?
+        }
+        Credential::PrivateKeyFile { path, passphrase } => {
+            let expanded = expand_tilde(&path);
+            let pem = std::fs::read_to_string(Path::new(&expanded))?;
+            let key = decode_secret_key(&pem, passphrase.as_deref())?;
+            let hash_alg = hash_alg_for_key(&key, legacy_crypto);
+            let key = PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg);
+            timeout(
+                timeout_dur,
+                handle.authenticate_publickey(username, key),
+            )
+            .await
+            .map_err(|_| SshintoError::Timeout)?
+            .map_err(SshintoError::Ssh)?
+        }
+    };
+
+    if !auth_result.success() {
+        return Err(SshintoError::AuthFailed);
+    }
+
+    Ok(())
 }
 
 impl Session {
@@ -61,71 +145,70 @@ impl Session {
         credential: Credential,
         config: ConnectConfig,
     ) -> Result<Self> {
-        let ssh_config = if config.legacy_crypto {
-            let mut kex = russh::Preferred::default().kex.into_owned();
-            kex.push(russh::kex::DH_G14_SHA1);
-            kex.push(russh::kex::DH_GEX_SHA1);
-            Arc::new(client::Config {
-                preferred: russh::Preferred {
-                    kex: Cow::Owned(kex),
-                    ..Default::default()
-                },
-                ..Default::default()
-            })
-        } else {
-            Arc::new(client::Config::default())
-        };
-        let addr = format!("{host}:{port}");
+        let (mut handle, jump_handle) = if let Some(jh) = config.jumphost {
+            // Connect to the jump host first.
+            let jump_ssh_config = build_ssh_config(jh.legacy_crypto);
+            let jump_addr = format!("{}:{}", jh.host, jh.port);
 
-        let mut handle = timeout(config.timeout, client::connect(ssh_config, &*addr, SshHandler))
+            let mut jh_handle = timeout(
+                config.timeout,
+                client::connect(jump_ssh_config, &*jump_addr, SshHandler),
+            )
             .await
             .map_err(|_| SshintoError::Timeout)?
             .map_err(SshintoError::Ssh)?;
 
-        let legacy_crypto = config.legacy_crypto;
-        let auth_result = match credential {
-            Credential::Password(password) => {
-                timeout(
-                    config.timeout,
-                    handle.authenticate_password(username, password),
-                )
+            authenticate(
+                &mut jh_handle,
+                &jh.username,
+                jh.credential,
+                jh.legacy_crypto,
+                config.timeout,
+            )
+            .await?;
+
+            // Open a direct-tcpip channel through the jump host to the target.
+            let channel = jh_handle
+                .channel_open_direct_tcpip(host, port as u32, "0.0.0.0", 0)
                 .await
-                .map_err(|_| SshintoError::Timeout)?
-                .map_err(SshintoError::Ssh)?
-            }
-            Credential::PrivateKey {
-                key_pem,
-                passphrase,
-            } => {
-                let key = decode_secret_key(&key_pem, passphrase.as_deref())?;
-                let hash_alg = hash_alg_for_key(&key, legacy_crypto);
-                let key = PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg);
-                timeout(
-                    config.timeout,
-                    handle.authenticate_publickey(username, key),
-                )
-                .await
-                .map_err(|_| SshintoError::Timeout)?
-                .map_err(SshintoError::Ssh)?
-            }
-            Credential::PrivateKeyFile { path, passphrase } => {
-                let pem = std::fs::read_to_string(Path::new(&path))?;
-                let key = decode_secret_key(&pem, passphrase.as_deref())?;
-                let hash_alg = hash_alg_for_key(&key, legacy_crypto);
-                let key = PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg);
-                timeout(
-                    config.timeout,
-                    handle.authenticate_publickey(username, key),
-                )
-                .await
-                .map_err(|_| SshintoError::Timeout)?
-                .map_err(SshintoError::Ssh)?
-            }
+                .map_err(SshintoError::Ssh)?;
+            let stream = channel.into_stream();
+
+            // Establish the nested SSH session over the forwarded stream.
+            let target_ssh_config = build_ssh_config(config.legacy_crypto);
+            let target_handle = timeout(
+                config.timeout,
+                client::connect_stream(target_ssh_config, stream, SshHandler),
+            )
+            .await
+            .map_err(|_| SshintoError::Timeout)?
+            .map_err(SshintoError::Ssh)?;
+
+            (target_handle, Some(jh_handle))
+        } else {
+            // Direct connection.
+            let ssh_config = build_ssh_config(config.legacy_crypto);
+            let addr = format!("{host}:{port}");
+
+            let direct_handle = timeout(
+                config.timeout,
+                client::connect(ssh_config, &*addr, SshHandler),
+            )
+            .await
+            .map_err(|_| SshintoError::Timeout)?
+            .map_err(SshintoError::Ssh)?;
+
+            (direct_handle, None)
         };
 
-        if !auth_result.success() {
-            return Err(SshintoError::AuthFailed);
-        }
+        authenticate(
+            &mut handle,
+            username,
+            credential,
+            config.legacy_crypto,
+            config.timeout,
+        )
+        .await?;
 
         let channel = handle.channel_open_session().await?;
         let (mut reader, writer) = channel.split();
@@ -140,6 +223,7 @@ impl Session {
 
         Ok(Self {
             handle,
+            _jump_handle: jump_handle,
             reader,
             writer,
         })
@@ -270,8 +354,22 @@ impl Session {
         self.handle
             .disconnect(Disconnect::ByApplication, "closing session", "en")
             .await?;
+        if let Some(jh) = self._jump_handle {
+            let _ = jh
+                .disconnect(Disconnect::ByApplication, "closing jump session", "en")
+                .await;
+        }
         Ok(())
     }
+}
+
+fn expand_tilde(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            return Path::new(&home).join(rest).to_string_lossy().into_owned();
+        }
+    }
+    path.to_string()
 }
 
 fn hash_alg_for_key(key: &russh::keys::PrivateKey, legacy_crypto: bool) -> Option<HashAlg> {

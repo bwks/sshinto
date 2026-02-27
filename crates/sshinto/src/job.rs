@@ -3,11 +3,11 @@ use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Duration;
 
-use lib_sshinto::{ConnectConfig, Credential, Session};
+use lib_sshinto::{ConnectConfig, Credential, JumpHost, Session};
 use tokio::sync::Semaphore;
 
 use crate::cli::JobArgs;
-use crate::config::{Config, ConfigError, Defaults, ResolvedArgs};
+use crate::config::{parse_jump_spec, Config, ConfigError, Defaults, JumpHostResolved, ResolvedArgs};
 use crate::writer;
 
 // ── Jobfile structs ─────────────────────────────────────────────────
@@ -34,6 +34,12 @@ pub struct JobDefaults {
     #[serde(default)]
     pub commands: Vec<String>,
     pub output_dir: Option<String>,
+    pub jumphost: Option<String>,
+    pub jumphost_username: Option<String>,
+    pub jumphost_password: Option<String>,
+    pub jumphost_key_file: Option<String>,
+    pub jumphost_key_passphrase: Option<String>,
+    pub jumphost_legacy_crypto: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,6 +55,12 @@ pub struct JobGroup {
     pub device_type: Option<DeviceKind>,
     #[serde(default)]
     pub commands: Vec<String>,
+    pub jumphost: Option<String>,
+    pub jumphost_username: Option<String>,
+    pub jumphost_password: Option<String>,
+    pub jumphost_key_file: Option<String>,
+    pub jumphost_key_passphrase: Option<String>,
+    pub jumphost_legacy_crypto: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -64,6 +76,12 @@ pub struct JobHostEntry {
     pub timeout: Option<u64>,
     pub legacy_crypto: Option<bool>,
     pub device_type: Option<DeviceKind>,
+    pub jumphost: Option<String>,
+    pub jumphost_username: Option<String>,
+    pub jumphost_password: Option<String>,
+    pub jumphost_key_file: Option<String>,
+    pub jumphost_key_passphrase: Option<String>,
+    pub jumphost_legacy_crypto: Option<bool>,
 }
 
 // ── Loading ─────────────────────────────────────────────────────────
@@ -116,6 +134,7 @@ fn resolve_host(
     config: &Defaults,
     commands: &[String],
     password_override: Option<&str>,
+    cli_jump: Option<&CliJumpOverride>,
 ) -> Result<ResolvedArgs, ConfigError> {
     macro_rules! pick {
         ($host:expr, $group:expr, $def:expr, $cfg:expr) => {
@@ -203,6 +222,83 @@ fn resolve_host(
 
     let output_dir = defaults.output_dir.clone();
 
+    // Resolve jump host: CLI override > host entry > group > job defaults > config defaults
+    let jump_host = if let Some(cli_jh) = cli_jump {
+        // CLI flag overrides everything
+        let (jh_host, jh_port, mut jh_username) = parse_jump_spec(&cli_jh.spec, &username);
+        if let Some(ref explicit_user) = cli_jh.username {
+            jh_username = explicit_user.clone();
+        }
+        Some(JumpHostResolved {
+            host: jh_host,
+            port: jh_port,
+            username: jh_username,
+            password: cli_jh.password.clone(),
+            key_file: cli_jh.key_file.clone(),
+            key_passphrase: cli_jh.key_passphrase.clone(),
+            legacy_crypto: cli_jh.legacy_crypto,
+        })
+    } else {
+        let jh_spec = pick!(
+            entry.jumphost,
+            group.and_then(|g| g.jumphost.as_ref()),
+            defaults.jumphost,
+            config.jumphost
+        );
+
+        if let Some(spec) = jh_spec {
+            let (jh_host, jh_port, mut jh_username) = parse_jump_spec(&spec, &username);
+
+            // Explicit jumphost_username overrides the parsed spec username
+            let explicit_user = pick!(
+                entry.jumphost_username,
+                group.and_then(|g| g.jumphost_username.as_ref()),
+                defaults.jumphost_username,
+                config.jumphost_username
+            );
+            if let Some(user) = explicit_user {
+                jh_username = user;
+            }
+
+            let jh_password = pick!(
+                entry.jumphost_password,
+                group.and_then(|g| g.jumphost_password.as_ref()),
+                defaults.jumphost_password,
+                config.jumphost_password
+            );
+            let jh_key_file = pick!(
+                entry.jumphost_key_file,
+                group.and_then(|g| g.jumphost_key_file.as_ref()),
+                defaults.jumphost_key_file,
+                config.jumphost_key_file
+            );
+            let jh_key_passphrase = pick!(
+                entry.jumphost_key_passphrase,
+                group.and_then(|g| g.jumphost_key_passphrase.as_ref()),
+                defaults.jumphost_key_passphrase,
+                config.jumphost_key_passphrase
+            );
+            let jh_legacy_crypto = entry
+                .jumphost_legacy_crypto
+                .or(group.and_then(|g| g.jumphost_legacy_crypto))
+                .or(defaults.jumphost_legacy_crypto)
+                .or(config.jumphost_legacy_crypto)
+                .unwrap_or(false);
+
+            Some(JumpHostResolved {
+                host: jh_host,
+                port: jh_port,
+                username: jh_username,
+                password: jh_password,
+                key_file: jh_key_file,
+                key_passphrase: jh_key_passphrase,
+                legacy_crypto: jh_legacy_crypto,
+            })
+        } else {
+            None
+        }
+    };
+
     Ok(ResolvedArgs {
         host,
         port,
@@ -215,7 +311,18 @@ fn resolve_host(
         commands: resolved_commands.to_vec(),
         timeout,
         output_dir,
+        jump_host,
     })
+}
+
+/// CLI jump host override, extracted from JobArgs.
+struct CliJumpOverride {
+    spec: String,
+    username: Option<String>,
+    password: Option<String>,
+    key_file: Option<String>,
+    key_passphrase: Option<String>,
+    legacy_crypto: bool,
 }
 
 // ── Per-host execution ──────────────────────────────────────────────
@@ -230,6 +337,27 @@ async fn run_single_host(
         Ok(output) => (name, host, Ok(output)),
         Err(e) => (name, host, Err(e)),
     }
+}
+
+fn build_jump_host(jh: JumpHostResolved) -> Result<JumpHost, Box<dyn std::error::Error + Send + Sync>> {
+    let credential = if let Some(ref key_path) = jh.key_file {
+        Credential::PrivateKeyFile {
+            path: key_path.clone(),
+            passphrase: jh.key_passphrase.clone(),
+        }
+    } else if let Some(ref pw) = jh.password {
+        Credential::Password(pw.clone())
+    } else {
+        return Err("no credential available for jump host".into());
+    };
+
+    Ok(JumpHost {
+        host: jh.host,
+        port: jh.port,
+        username: jh.username,
+        credential,
+        legacy_crypto: jh.legacy_crypto,
+    })
 }
 
 async fn run_single_host_inner(
@@ -248,8 +376,14 @@ async fn run_single_host_inner(
         return Err("no credential available".into());
     };
 
+    let jump = match args.jump_host {
+        Some(jh) => Some(build_jump_host(jh)?),
+        None => None,
+    };
+
     let config = ConnectConfig {
         legacy_crypto: args.legacy_crypto,
+        jumphost: jump,
         ..Default::default()
     };
 
@@ -307,6 +441,16 @@ pub async fn run_job(job_args: &JobArgs) -> Result<(), Box<dyn std::error::Error
     let job = JobFile::load(&job_args.file)?;
     let config = Config::load().unwrap_or_default();
 
+    // Build CLI jump override if provided.
+    let cli_jump = job_args.jumphost.as_ref().map(|spec| CliJumpOverride {
+        spec: spec.clone(),
+        username: job_args.jumphost_username.clone(),
+        password: job_args.jumphost_password.clone(),
+        key_file: job_args.jumphost_key_file.clone(),
+        key_passphrase: job_args.jumphost_key_passphrase.clone(),
+        legacy_crypto: job_args.jumphost_legacy_crypto,
+    });
+
     // Determine if we need to prompt for a password.
     // Prompt once if any host lacks both key_file and explicit password.
     let needs_password = job.hosts.iter().any(|h| {
@@ -339,7 +483,15 @@ pub async fn run_job(job_args: &JobArgs) -> Result<(), Box<dyn std::error::Error
             .group
             .as_ref()
             .and_then(|gn| job.groups.iter().find(|g| g.name == *gn));
-        let args = resolve_host(entry, group, &job.defaults, &config.defaults, &job.defaults.commands, password_override.as_deref())?;
+        let args = resolve_host(
+            entry,
+            group,
+            &job.defaults,
+            &config.defaults,
+            &job.defaults.commands,
+            password_override.as_deref(),
+            cli_jump.as_ref(),
+        )?;
         resolved.push((entry.name.clone(), args));
     }
 
@@ -451,9 +603,15 @@ username = "admin"
             timeout: None,
             legacy_crypto: Some(true),
             device_type: None,
+            jumphost: None,
+            jumphost_username: None,
+            jumphost_password: None,
+            jumphost_key_file: None,
+            jumphost_key_passphrase: None,
+            jumphost_legacy_crypto: None,
         };
         let commands = vec!["show version".into()];
-        let r = resolve_host(&entry, None, &defaults, &Defaults::default(), &commands, Some("pass123")).unwrap();
+        let r = resolve_host(&entry, None, &defaults, &Defaults::default(), &commands, Some("pass123"), None).unwrap();
         assert_eq!(r.host, "10.0.0.1");
         assert_eq!(r.username, "sherpa");
         assert_eq!(r.device_type, DeviceKind::CiscoIos);
@@ -481,9 +639,15 @@ username = "admin"
             timeout: None,
             legacy_crypto: None,
             device_type: Some(DeviceKind::AristaEos),
+            jumphost: None,
+            jumphost_username: None,
+            jumphost_password: None,
+            jumphost_key_file: None,
+            jumphost_key_passphrase: None,
+            jumphost_legacy_crypto: None,
         };
         let commands = vec!["show version".into()];
-        let r = resolve_host(&entry, None, &defaults, &Defaults::default(), &commands, None).unwrap();
+        let r = resolve_host(&entry, None, &defaults, &Defaults::default(), &commands, None, None).unwrap();
         assert_eq!(r.username, "admin");
         assert_eq!(r.password.as_deref(), Some("secret"));
         assert_eq!(r.port, 2222);
@@ -508,8 +672,14 @@ username = "admin"
             timeout: None,
             legacy_crypto: None,
             device_type: None,
+            jumphost: None,
+            jumphost_username: None,
+            jumphost_password: None,
+            jumphost_key_file: None,
+            jumphost_key_passphrase: None,
+            jumphost_legacy_crypto: None,
         };
-        let err = resolve_host(&entry, None, &defaults, &Defaults::default(), &["show ver".into()], None).unwrap_err();
+        let err = resolve_host(&entry, None, &defaults, &Defaults::default(), &["show ver".into()], None, None).unwrap_err();
         assert!(matches!(err, ConfigError::MissingField("username")));
     }
 
@@ -532,6 +702,12 @@ username = "admin"
             legacy_crypto: Some(true),
             device_type: Some(DeviceKind::AristaEos),
             commands: vec![],
+            jumphost: None,
+            jumphost_username: None,
+            jumphost_password: None,
+            jumphost_key_file: None,
+            jumphost_key_passphrase: None,
+            jumphost_legacy_crypto: None,
         };
         let entry = JobHostEntry {
             name: "sw1".into(),
@@ -545,9 +721,15 @@ username = "admin"
             timeout: None,
             legacy_crypto: None,
             device_type: None,
+            jumphost: None,
+            jumphost_username: None,
+            jumphost_password: None,
+            jumphost_key_file: None,
+            jumphost_key_passphrase: None,
+            jumphost_legacy_crypto: None,
         };
         let commands = vec!["show version".into()];
-        let r = resolve_host(&entry, Some(&group), &defaults, &Defaults::default(), &commands, None).unwrap();
+        let r = resolve_host(&entry, Some(&group), &defaults, &Defaults::default(), &commands, None, None).unwrap();
         assert_eq!(r.device_type, DeviceKind::AristaEos);
         assert_eq!(r.timeout, 20);
         assert!(r.legacy_crypto);
@@ -572,6 +754,12 @@ username = "admin"
             legacy_crypto: Some(true),
             device_type: Some(DeviceKind::CiscoIos),
             commands: vec![],
+            jumphost: None,
+            jumphost_username: None,
+            jumphost_password: None,
+            jumphost_key_file: None,
+            jumphost_key_passphrase: None,
+            jumphost_legacy_crypto: None,
         };
         let entry = JobHostEntry {
             name: "r1".into(),
@@ -585,9 +773,15 @@ username = "admin"
             timeout: None,
             legacy_crypto: None,
             device_type: None,
+            jumphost: None,
+            jumphost_username: None,
+            jumphost_password: None,
+            jumphost_key_file: None,
+            jumphost_key_passphrase: None,
+            jumphost_legacy_crypto: None,
         };
         let commands = vec!["show version".into()];
-        let r = resolve_host(&entry, Some(&group), &defaults, &Defaults::default(), &commands, None).unwrap();
+        let r = resolve_host(&entry, Some(&group), &defaults, &Defaults::default(), &commands, None, None).unwrap();
         assert_eq!(r.username, "host_user"); // host overrides group
         assert_eq!(r.port, 22); // host overrides group
         assert_eq!(r.timeout, 20); // from group (host is None)
@@ -611,6 +805,12 @@ username = "admin"
             legacy_crypto: None,
             device_type: None,
             commands: vec!["show inventory".into()],
+            jumphost: None,
+            jumphost_username: None,
+            jumphost_password: None,
+            jumphost_key_file: None,
+            jumphost_key_passphrase: None,
+            jumphost_legacy_crypto: None,
         };
         let entry = JobHostEntry {
             name: "r1".into(),
@@ -624,9 +824,15 @@ username = "admin"
             timeout: None,
             legacy_crypto: None,
             device_type: None,
+            jumphost: None,
+            jumphost_username: None,
+            jumphost_password: None,
+            jumphost_key_file: None,
+            jumphost_key_passphrase: None,
+            jumphost_legacy_crypto: None,
         };
         let default_commands = vec!["show version".into()];
-        let r = resolve_host(&entry, Some(&group), &defaults, &Defaults::default(), &default_commands, None).unwrap();
+        let r = resolve_host(&entry, Some(&group), &defaults, &Defaults::default(), &default_commands, None, None).unwrap();
         assert_eq!(r.commands, vec!["show inventory".to_string()]);
     }
 
@@ -694,5 +900,88 @@ username = "admin"
     fn load_missing_file_errors() {
         let err = JobFile::load("/tmp/nonexistent_sshinto_jobfile.toml").unwrap_err();
         assert!(matches!(err, ConfigError::Io(_)));
+    }
+
+    #[test]
+    fn resolve_host_with_jump_from_defaults() {
+        let defaults = JobDefaults {
+            username: Some("sherpa".into()),
+            device_type: Some(DeviceKind::CiscoIos),
+            jumphost: Some("admin@bastion:2222".into()),
+            jumphost_password: Some("jumppass".into()),
+            jumphost_legacy_crypto: Some(true),
+            ..Default::default()
+        };
+        let entry = JobHostEntry {
+            name: "r1".into(),
+            host: "10.0.0.1".into(),
+            group: None,
+            username: None,
+            password: Some("pass".into()),
+            key_file: None,
+            key_passphrase: None,
+            port: None,
+            timeout: None,
+            legacy_crypto: None,
+            device_type: None,
+            jumphost: None,
+            jumphost_username: None,
+            jumphost_password: None,
+            jumphost_key_file: None,
+            jumphost_key_passphrase: None,
+            jumphost_legacy_crypto: None,
+        };
+        let commands = vec!["show version".into()];
+        let r = resolve_host(&entry, None, &defaults, &Defaults::default(), &commands, None, None).unwrap();
+        let jh = r.jump_host.expect("should have jump host");
+        assert_eq!(jh.host, "bastion");
+        assert_eq!(jh.port, 2222);
+        assert_eq!(jh.username, "admin");
+        assert_eq!(jh.password.as_deref(), Some("jumppass"));
+        assert!(jh.legacy_crypto);
+    }
+
+    #[test]
+    fn cli_jump_overrides_jobfile() {
+        let defaults = JobDefaults {
+            username: Some("sherpa".into()),
+            device_type: Some(DeviceKind::CiscoIos),
+            jumphost: Some("admin@bastion:2222".into()),
+            ..Default::default()
+        };
+        let entry = JobHostEntry {
+            name: "r1".into(),
+            host: "10.0.0.1".into(),
+            group: None,
+            username: None,
+            password: Some("pass".into()),
+            key_file: None,
+            key_passphrase: None,
+            port: None,
+            timeout: None,
+            legacy_crypto: None,
+            device_type: None,
+            jumphost: None,
+            jumphost_username: None,
+            jumphost_password: None,
+            jumphost_key_file: None,
+            jumphost_key_passphrase: None,
+            jumphost_legacy_crypto: None,
+        };
+        let commands = vec!["show version".into()];
+        let cli_jh = CliJumpOverride {
+            spec: "override@jump:3333".into(),
+            username: None,
+            password: Some("clipass".into()),
+            key_file: None,
+            key_passphrase: None,
+            legacy_crypto: false,
+        };
+        let r = resolve_host(&entry, None, &defaults, &Defaults::default(), &commands, None, Some(&cli_jh)).unwrap();
+        let jh = r.jump_host.expect("should have jump host");
+        assert_eq!(jh.host, "jump");
+        assert_eq!(jh.port, 3333);
+        assert_eq!(jh.username, "override");
+        assert_eq!(jh.password.as_deref(), Some("clipass"));
     }
 }

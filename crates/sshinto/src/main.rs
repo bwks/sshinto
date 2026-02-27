@@ -6,7 +6,7 @@ mod writer;
 use clap::Parser;
 use cli::{Cli, Commands};
 use config::ResolvedArgs;
-use lib_sshinto::{ConnectConfig, Credential, Session};
+use lib_sshinto::{ConnectConfig, Credential, JumpHost, Session};
 use std::time::Duration;
 
 #[tokio::main]
@@ -39,6 +39,31 @@ async fn main() {
     }
 }
 
+fn build_jump_host(
+    jh: config::JumpHostResolved,
+) -> Result<JumpHost, Box<dyn std::error::Error>> {
+    let credential = if let Some(ref key_path) = jh.key_file {
+        Credential::PrivateKeyFile {
+            path: key_path.clone(),
+            passphrase: jh.key_passphrase.clone(),
+        }
+    } else if let Some(ref pw) = jh.password {
+        Credential::Password(pw.clone())
+    } else {
+        eprint!("Password for jump host {}@{}: ", jh.username, jh.host);
+        let pw = rpassword::read_password()?;
+        Credential::Password(pw)
+    };
+
+    Ok(JumpHost {
+        host: jh.host,
+        port: jh.port,
+        username: jh.username,
+        credential,
+        legacy_crypto: jh.legacy_crypto,
+    })
+}
+
 async fn run(args: ResolvedArgs) -> Result<(), Box<dyn std::error::Error>> {
     let credential = if let Some(ref key_path) = args.key_file {
         Credential::PrivateKeyFile {
@@ -53,8 +78,14 @@ async fn run(args: ResolvedArgs) -> Result<(), Box<dyn std::error::Error>> {
         Credential::Password(pw)
     };
 
+    let jump = match args.jump_host {
+        Some(jh) => Some(build_jump_host(jh)?),
+        None => None,
+    };
+
     let config = ConnectConfig {
         legacy_crypto: args.legacy_crypto,
+        jumphost: jump,
         ..Default::default()
     };
 
