@@ -124,13 +124,17 @@ pub struct ScpArgs {
     #[arg(long)]
     pub legacy_crypto: bool,
 
+    /// Device type (required when --dest is omitted, to derive remote path from base_path)
+    #[arg(short = 'd', long)]
+    pub device_type: Option<DeviceKind>,
+
     /// Local file path to upload
     #[arg(long)]
     pub source: String,
 
-    /// Remote destination path
+    /// Remote destination path (default: device base_path + source filename)
     #[arg(long)]
-    pub dest: String,
+    pub dest: Option<String>,
 
     /// Transfer timeout in seconds
     #[arg(short = 't', long, default_value = "30")]

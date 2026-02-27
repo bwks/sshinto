@@ -24,6 +24,7 @@ pub struct DeviceProfile {
     pub line_separator: &'static str,
     pub exit_config_command: &'static str,
     pub enable_command: &'static str,
+    pub base_path: &'static str,
 }
 
 const CISCO_IOS: DeviceProfile = DeviceProfile {
@@ -39,6 +40,7 @@ const CISCO_IOS: DeviceProfile = DeviceProfile {
     line_separator: "\n",
     exit_config_command: "end",
     enable_command: "enable",
+    base_path: "flash:",
 };
 
 const CISCO_IOS_XR: DeviceProfile = DeviceProfile {
@@ -54,6 +56,7 @@ const CISCO_IOS_XR: DeviceProfile = DeviceProfile {
     line_separator: "\n",
     exit_config_command: "end",
     enable_command: "",
+    base_path: "disk0:",
 };
 
 const CISCO_NXOS: DeviceProfile = DeviceProfile {
@@ -69,6 +72,7 @@ const CISCO_NXOS: DeviceProfile = DeviceProfile {
     line_separator: "\n",
     exit_config_command: "end",
     enable_command: "",
+    base_path: "bootflash:",
 };
 
 const JUNIPER_JUNOS: DeviceProfile = DeviceProfile {
@@ -84,6 +88,7 @@ const JUNIPER_JUNOS: DeviceProfile = DeviceProfile {
     line_separator: "\n",
     exit_config_command: "exit configuration-mode",
     enable_command: "",
+    base_path: "/var/tmp/",
 };
 
 const ARISTA_EOS: DeviceProfile = DeviceProfile {
@@ -99,6 +104,7 @@ const ARISTA_EOS: DeviceProfile = DeviceProfile {
     line_separator: "\n",
     exit_config_command: "end",
     enable_command: "enable",
+    base_path: "/mnt/flash/",
 };
 
 impl DeviceKind {
@@ -137,7 +143,11 @@ mod tests {
             (DeviceKind::CiscoIos, "Cisco IOS", "terminal length 0"),
             (DeviceKind::CiscoIosXr, "Cisco IOS-XR", "terminal length 0"),
             (DeviceKind::CiscoNxos, "Cisco NX-OS", "terminal length 0"),
-            (DeviceKind::JuniperJunos, "Juniper JUNOS", "set cli screen-length 0"),
+            (
+                DeviceKind::JuniperJunos,
+                "Juniper JUNOS",
+                "set cli screen-length 0",
+            ),
             (DeviceKind::AristaEos, "Arista EOS", "terminal length 0"),
         ];
         for (kind, expected_name, expected_paging) in cases {

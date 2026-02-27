@@ -64,7 +64,7 @@ pub struct Defaults {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ScpUpload {
     pub source: String,
-    pub dest: String,
+    pub dest: Option<String>,
 }
 
 // ── Resolved args ───────────────────────────────────────────────────
@@ -105,9 +105,10 @@ pub struct ResolvedScpArgs {
     pub password: Option<String>,
     pub key_file: Option<String>,
     pub key_passphrase: Option<String>,
+    pub device_type: Option<DeviceKind>,
     pub legacy_crypto: bool,
     pub source: String,
-    pub dest: String,
+    pub dest: Option<String>,
     pub timeout: u64,
     pub jump_host: Option<JumpHostResolved>,
 }
@@ -292,9 +293,18 @@ pub fn resolve_scp(cli: &ScpArgs, config: &Config) -> Result<ResolvedScpArgs, Co
         config.defaults.legacy_crypto.unwrap_or(false)
     };
 
+    let device_type = cli
+        .device_type
+        .or(config.defaults.device_type);
+
     let password = pick!(cli.password, defaults.password);
     let key_file = pick!(cli.key_file, defaults.key_file);
     let key_passphrase = pick!(cli.key_passphrase, defaults.key_passphrase);
+
+    // If dest is omitted, device_type is required to derive the remote path.
+    if cli.dest.is_none() && device_type.is_none() {
+        return Err(ConfigError::MissingField("dest or device_type"));
+    }
 
     // Resolve jump host
     let jump_spec = cli
@@ -347,6 +357,7 @@ pub fn resolve_scp(cli: &ScpArgs, config: &Config) -> Result<ResolvedScpArgs, Co
         password,
         key_file,
         key_passphrase,
+        device_type,
         legacy_crypto,
         source: cli.source.clone(),
         dest: cli.dest.clone(),

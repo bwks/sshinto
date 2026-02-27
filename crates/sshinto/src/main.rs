@@ -7,8 +7,27 @@ use clap::Parser;
 use cli::{Cli, Commands};
 use config::{ResolvedArgs, ResolvedScpArgs};
 use lib_sshinto::{ConnectConfig, Connection, Credential, JumpHost, Session};
+use models::DeviceKind;
 use std::path::Path;
 use std::time::Duration;
+
+/// Build the final remote destination path.
+///
+/// If `dest` is explicitly provided, return it as-is.
+/// Otherwise, extract the filename from `source` and prepend the device's `base_path`.
+fn resolve_dest(source: &str, dest: Option<&str>, device_type: Option<DeviceKind>) -> String {
+    if let Some(d) = dest {
+        return d.to_string();
+    }
+    let filename = Path::new(source)
+        .file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or_else(|| source.to_string());
+    let base_path = device_type
+        .map(|dt| dt.profile().base_path)
+        .unwrap_or("");
+    format!("{base_path}{filename}")
+}
 
 #[tokio::main]
 async fn main() {
@@ -195,15 +214,16 @@ async fn run_scp(args: ResolvedScpArgs) -> Result<(), Box<dyn std::error::Error>
     };
 
     let timeout_dur = Duration::from_secs(args.timeout);
+    let dest = resolve_dest(&args.source, args.dest.as_deref(), args.device_type);
 
     eprintln!("Connecting to {}:{}...", args.host, args.port);
 
     let conn =
         Connection::connect(&args.host, args.port, &args.username, credential, config).await?;
 
-    eprintln!("Uploading {} -> {}...", args.source, args.dest);
+    eprintln!("Uploading {} -> {}...", args.source, dest);
 
-    conn.upload_file(Path::new(&args.source), &args.dest, timeout_dur)
+    conn.upload_file(Path::new(&args.source), &dest, timeout_dur)
         .await?;
 
     eprintln!("Upload complete.");

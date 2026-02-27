@@ -348,6 +348,23 @@ struct CliJumpOverride {
     legacy_crypto: bool,
 }
 
+// ── Dest resolution ─────────────────────────────────────────────────
+
+/// Build the final remote destination path for an upload.
+/// If `dest` is provided, return it as-is. Otherwise, derive from
+/// the device's `base_path` + the source filename.
+fn resolve_upload_dest(source: &str, dest: Option<&str>, device_type: DeviceKind) -> String {
+    if let Some(d) = dest {
+        return d.to_string();
+    }
+    let filename = std::path::Path::new(source)
+        .file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or_else(|| source.to_string());
+    let base_path = device_type.profile().base_path;
+    format!("{base_path}{filename}")
+}
+
 // ── Per-host execution ──────────────────────────────────────────────
 
 async fn run_single_host(
@@ -421,9 +438,10 @@ async fn run_single_host_inner(
     // only support one channel at a time).
     for upload in &args.uploads {
         let source = std::path::Path::new(&upload.source);
-        match conn.upload_file(source, &upload.dest, timeout_dur).await {
-            Ok(()) => eprintln!("[{name}] Uploaded {} -> {}", upload.source, upload.dest),
-            Err(e) => return Err(format!("upload {} -> {}: {e}", upload.source, upload.dest).into()),
+        let dest = resolve_upload_dest(&upload.source, upload.dest.as_deref(), args.device_type);
+        match conn.upload_file(source, &dest, timeout_dur).await {
+            Ok(()) => eprintln!("[{name}] Uploaded {} -> {}", upload.source, dest),
+            Err(e) => return Err(format!("upload {} -> {}: {e}", upload.source, dest).into()),
         }
     }
 
