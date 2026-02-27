@@ -51,26 +51,34 @@ Create a jobfile (e.g. `upgrade.toml`):
 ```toml
 [defaults]
 username = "sherpa"
-device_type = "cisco_ios"
-timeout = 10
 key_file = "~/.ssh/id_ed25519"
+commands = ["show version", "show ip route"]
 
-commands = [
-    "show version",
-    "show ip route",
-]
+[[groups]]
+name = "ios_devices"
+device_type = "cisco_ios"
+legacy_crypto = true
+timeout = 10
+
+[[groups]]
+name = "eos_devices"
+device_type = "arista_eos"
+timeout = 15
+commands = ["show version"]   # overrides defaults commands for this group
 
 [[hosts]]
 name = "lab-router"
 host = "172.31.0.11"
-legacy_crypto = true
+group = "ios_devices"
 
 [[hosts]]
 name = "core-switch"
 host = "10.0.1.1"
-device_type = "arista_eos"
+group = "eos_devices"
 username = "admin"
 ```
+
+Groups let you define named bundles of settings that multiple hosts can reference via `group = "name"`, reducing duplication across hosts of the same type. Groups can set any field that `[defaults]` supports, including `commands`.
 
 Run the job:
 
@@ -105,7 +113,7 @@ lab-router: ok
 core-switch: error - authentication failed
 ```
 
-Host entries inherit from `[defaults]` and can override any field. If any host requires password authentication and no password is set, you'll be prompted once.
+Host entries inherit from their group (if set), then `[defaults]`, and can override any field. Merge priority: `host entry → group → defaults → hardcoded`. If any host requires password authentication and no password is set, you'll be prompted once.
 
 ## Supported device types
 

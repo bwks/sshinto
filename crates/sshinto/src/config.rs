@@ -12,6 +12,7 @@ pub enum ConfigError {
     Io(std::io::Error),
     Parse(toml::de::Error),
     MissingField(&'static str),
+    InvalidGroup(String),
 }
 
 impl fmt::Display for ConfigError {
@@ -21,6 +22,9 @@ impl fmt::Display for ConfigError {
             ConfigError::Parse(e) => write!(f, "config parse error: {e}"),
             ConfigError::MissingField(name) => {
                 write!(f, "missing required field: {name}")
+            }
+            ConfigError::InvalidGroup(name) => {
+                write!(f, "host references unknown group: {name}")
             }
         }
     }

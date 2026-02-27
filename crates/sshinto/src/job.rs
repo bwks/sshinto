@@ -7,7 +7,7 @@ use lib_sshinto::{ConnectConfig, Credential, Session};
 use tokio::sync::Semaphore;
 
 use crate::cli::JobArgs;
-use crate::config::{ConfigError, ResolvedArgs};
+use crate::config::{Config, ConfigError, Defaults, ResolvedArgs};
 
 // ── Jobfile structs ─────────────────────────────────────────────────
 
@@ -15,6 +15,8 @@ use crate::config::{ConfigError, ResolvedArgs};
 pub struct JobFile {
     #[serde(default)]
     pub defaults: JobDefaults,
+    #[serde(default)]
+    pub groups: Vec<JobGroup>,
     pub hosts: Vec<JobHostEntry>,
 }
 
@@ -33,9 +35,25 @@ pub struct JobDefaults {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct JobGroup {
+    pub name: String,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub key_file: Option<String>,
+    pub key_passphrase: Option<String>,
+    pub port: Option<u16>,
+    pub timeout: Option<u64>,
+    pub legacy_crypto: Option<bool>,
+    pub device_type: Option<DeviceKind>,
+    #[serde(default)]
+    pub commands: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct JobHostEntry {
     pub name: String,
     pub host: String,
+    pub group: Option<String>,
     pub username: Option<String>,
     pub password: Option<String>,
     pub key_file: Option<String>,
@@ -53,11 +71,34 @@ impl JobFile {
         let text = std::fs::read_to_string(path).map_err(ConfigError::Io)?;
         let job: JobFile = toml::from_str(&text).map_err(ConfigError::Parse)?;
 
-        if job.defaults.commands.is_empty() {
-            return Err(ConfigError::MissingField("commands"));
-        }
         if job.hosts.is_empty() {
             return Err(ConfigError::MissingField("hosts"));
+        }
+
+        // Validate that every host group reference points to an existing group.
+        for entry in &job.hosts {
+            if let Some(ref group_name) = entry.group {
+                if !job.groups.iter().any(|g| g.name == *group_name) {
+                    return Err(ConfigError::InvalidGroup(group_name.clone()));
+                }
+            }
+        }
+
+        // Commands must come from defaults or every host must get them from its group.
+        if job.defaults.commands.is_empty() {
+            let missing = job.hosts.iter().any(|h| {
+                match &h.group {
+                    Some(gn) => job
+                        .groups
+                        .iter()
+                        .find(|g| g.name == *gn)
+                        .map_or(true, |g| g.commands.is_empty()),
+                    None => true,
+                }
+            });
+            if missing {
+                return Err(ConfigError::MissingField("commands"));
+            }
         }
 
         Ok(job)
@@ -68,44 +109,94 @@ impl JobFile {
 
 fn resolve_host(
     entry: &JobHostEntry,
+    group: Option<&JobGroup>,
     defaults: &JobDefaults,
+    config: &Defaults,
     commands: &[String],
     password_override: Option<&str>,
 ) -> Result<ResolvedArgs, ConfigError> {
     macro_rules! pick {
-        ($host_field:expr, $def_field:expr) => {
-            $host_field.clone().or_else(|| $def_field.clone())
+        ($host:expr, $group:expr, $def:expr, $cfg:expr) => {
+            $host
+                .clone()
+                .or_else(|| $group.cloned())
+                .or_else(|| $def.clone())
+                .or_else(|| $cfg.clone())
         };
     }
 
     let host = entry.host.clone();
 
-    let username = pick!(entry.username, defaults.username)
-        .ok_or(ConfigError::MissingField("username"))?;
+    let username = pick!(
+        entry.username,
+        group.and_then(|g| g.username.as_ref()),
+        defaults.username,
+        config.username
+    )
+    .ok_or(ConfigError::MissingField("username"))?;
 
     let device_type = entry
         .device_type
+        .or(group.and_then(|g| g.device_type))
         .or(defaults.device_type)
+        .or(config.device_type)
         .ok_or(ConfigError::MissingField("device_type"))?;
 
-    let port = entry.port.or(defaults.port).unwrap_or(22);
-    let timeout = entry.timeout.or(defaults.timeout).unwrap_or(10);
+    let port = entry
+        .port
+        .or(group.and_then(|g| g.port))
+        .or(defaults.port)
+        .or(config.port)
+        .unwrap_or(22);
+
+    let timeout = entry
+        .timeout
+        .or(group.and_then(|g| g.timeout))
+        .or(defaults.timeout)
+        .or(config.timeout)
+        .unwrap_or(10);
 
     let legacy_crypto = entry
         .legacy_crypto
+        .or(group.and_then(|g| g.legacy_crypto))
         .or(defaults.legacy_crypto)
+        .or(config.legacy_crypto)
         .unwrap_or(false);
 
-    let key_file = pick!(entry.key_file, defaults.key_file);
-    let key_passphrase = pick!(entry.key_passphrase, defaults.key_passphrase);
+    let key_file = pick!(
+        entry.key_file,
+        group.and_then(|g| g.key_file.as_ref()),
+        defaults.key_file,
+        config.key_file
+    );
+    let key_passphrase = pick!(
+        entry.key_passphrase,
+        group.and_then(|g| g.key_passphrase.as_ref()),
+        defaults.key_passphrase,
+        config.key_passphrase
+    );
 
     let password = if key_file.is_some() {
-        // Key-based auth: no password needed for SSH
-        pick!(entry.password, defaults.password)
+        pick!(
+            entry.password,
+            group.and_then(|g| g.password.as_ref()),
+            defaults.password,
+            config.password
+        )
     } else {
-        // Password auth: host → defaults → override (prompted)
-        pick!(entry.password, defaults.password)
-            .or_else(|| password_override.map(String::from))
+        pick!(
+            entry.password,
+            group.and_then(|g| g.password.as_ref()),
+            defaults.password,
+            config.password
+        )
+        .or_else(|| password_override.map(String::from))
+    };
+
+    // Commands: host has no per-host commands field, so use group commands if non-empty, else defaults.
+    let resolved_commands = match group {
+        Some(g) if !g.commands.is_empty() => &g.commands,
+        _ => commands,
     };
 
     Ok(ResolvedArgs {
@@ -117,7 +208,7 @@ fn resolve_host(
         key_passphrase,
         device_type,
         legacy_crypto,
-        commands: commands.to_vec(),
+        commands: resolved_commands.to_vec(),
         timeout,
     })
 }
@@ -193,12 +284,23 @@ async fn run_single_host_inner(
 
 pub async fn run_job(job_args: &JobArgs) -> Result<(), Box<dyn std::error::Error>> {
     let job = JobFile::load(&job_args.file)?;
+    let config = Config::load().unwrap_or_default();
 
     // Determine if we need to prompt for a password.
     // Prompt once if any host lacks both key_file and explicit password.
     let needs_password = job.hosts.iter().any(|h| {
-        let has_key = h.key_file.is_some() || job.defaults.key_file.is_some();
-        let has_pw = h.password.is_some() || job.defaults.password.is_some();
+        let group = h
+            .group
+            .as_ref()
+            .and_then(|gn| job.groups.iter().find(|g| g.name == *gn));
+        let has_key = h.key_file.is_some()
+            || group.and_then(|g| g.key_file.as_ref()).is_some()
+            || job.defaults.key_file.is_some()
+            || config.defaults.key_file.is_some();
+        let has_pw = h.password.is_some()
+            || group.and_then(|g| g.password.as_ref()).is_some()
+            || job.defaults.password.is_some()
+            || config.defaults.password.is_some();
         !has_key && !has_pw
     });
 
@@ -212,7 +314,11 @@ pub async fn run_job(job_args: &JobArgs) -> Result<(), Box<dyn std::error::Error
     // Resolve all hosts up front so we fail fast on config errors.
     let mut resolved: Vec<(String, ResolvedArgs)> = Vec::with_capacity(job.hosts.len());
     for entry in &job.hosts {
-        let args = resolve_host(entry, &job.defaults, &job.defaults.commands, password_override.as_deref())?;
+        let group = entry
+            .group
+            .as_ref()
+            .and_then(|gn| job.groups.iter().find(|g| g.name == *gn));
+        let args = resolve_host(entry, group, &job.defaults, &config.defaults, &job.defaults.commands, password_override.as_deref())?;
         resolved.push((entry.name.clone(), args));
     }
 
@@ -308,6 +414,7 @@ username = "admin"
         let entry = JobHostEntry {
             name: "r1".into(),
             host: "10.0.0.1".into(),
+            group: None,
             username: None,
             password: None,
             key_file: None,
@@ -318,7 +425,7 @@ username = "admin"
             device_type: None,
         };
         let commands = vec!["show version".into()];
-        let r = resolve_host(&entry, &defaults, &commands, Some("pass123")).unwrap();
+        let r = resolve_host(&entry, None, &defaults, &Defaults::default(), &commands, Some("pass123")).unwrap();
         assert_eq!(r.host, "10.0.0.1");
         assert_eq!(r.username, "sherpa");
         assert_eq!(r.device_type, DeviceKind::CiscoIos);
@@ -337,6 +444,7 @@ username = "admin"
         let entry = JobHostEntry {
             name: "r1".into(),
             host: "10.0.0.1".into(),
+            group: None,
             username: Some("admin".into()),
             password: Some("secret".into()),
             key_file: None,
@@ -347,7 +455,7 @@ username = "admin"
             device_type: Some(DeviceKind::AristaEos),
         };
         let commands = vec!["show version".into()];
-        let r = resolve_host(&entry, &defaults, &commands, None).unwrap();
+        let r = resolve_host(&entry, None, &defaults, &Defaults::default(), &commands, None).unwrap();
         assert_eq!(r.username, "admin");
         assert_eq!(r.password.as_deref(), Some("secret"));
         assert_eq!(r.port, 2222);
@@ -363,6 +471,7 @@ username = "admin"
         let entry = JobHostEntry {
             name: "r1".into(),
             host: "10.0.0.1".into(),
+            group: None,
             username: None,
             password: None,
             key_file: None,
@@ -372,8 +481,185 @@ username = "admin"
             legacy_crypto: None,
             device_type: None,
         };
-        let err = resolve_host(&entry, &defaults, &["show ver".into()], None).unwrap_err();
+        let err = resolve_host(&entry, None, &defaults, &Defaults::default(), &["show ver".into()], None).unwrap_err();
         assert!(matches!(err, ConfigError::MissingField("username")));
+    }
+
+    #[test]
+    fn resolve_host_group_overrides_defaults() {
+        let defaults = JobDefaults {
+            username: Some("sherpa".into()),
+            device_type: Some(DeviceKind::CiscoIos),
+            timeout: Some(10),
+            ..Default::default()
+        };
+        let group = JobGroup {
+            name: "eos_devices".into(),
+            username: None,
+            password: None,
+            key_file: None,
+            key_passphrase: None,
+            port: None,
+            timeout: Some(20),
+            legacy_crypto: Some(true),
+            device_type: Some(DeviceKind::AristaEos),
+            commands: vec![],
+        };
+        let entry = JobHostEntry {
+            name: "sw1".into(),
+            host: "10.0.0.2".into(),
+            group: Some("eos_devices".into()),
+            username: None,
+            password: None,
+            key_file: None,
+            key_passphrase: None,
+            port: None,
+            timeout: None,
+            legacy_crypto: None,
+            device_type: None,
+        };
+        let commands = vec!["show version".into()];
+        let r = resolve_host(&entry, Some(&group), &defaults, &Defaults::default(), &commands, None).unwrap();
+        assert_eq!(r.device_type, DeviceKind::AristaEos);
+        assert_eq!(r.timeout, 20);
+        assert!(r.legacy_crypto);
+        assert_eq!(r.username, "sherpa"); // falls through group (None) to defaults
+    }
+
+    #[test]
+    fn resolve_host_entry_overrides_group() {
+        let defaults = JobDefaults {
+            username: Some("sherpa".into()),
+            device_type: Some(DeviceKind::CiscoIos),
+            ..Default::default()
+        };
+        let group = JobGroup {
+            name: "ios_devices".into(),
+            username: Some("group_user".into()),
+            password: None,
+            key_file: None,
+            key_passphrase: None,
+            port: Some(830),
+            timeout: Some(20),
+            legacy_crypto: Some(true),
+            device_type: Some(DeviceKind::CiscoIos),
+            commands: vec![],
+        };
+        let entry = JobHostEntry {
+            name: "r1".into(),
+            host: "10.0.0.1".into(),
+            group: Some("ios_devices".into()),
+            username: Some("host_user".into()),
+            password: None,
+            key_file: None,
+            key_passphrase: None,
+            port: Some(22),
+            timeout: None,
+            legacy_crypto: None,
+            device_type: None,
+        };
+        let commands = vec!["show version".into()];
+        let r = resolve_host(&entry, Some(&group), &defaults, &Defaults::default(), &commands, None).unwrap();
+        assert_eq!(r.username, "host_user"); // host overrides group
+        assert_eq!(r.port, 22); // host overrides group
+        assert_eq!(r.timeout, 20); // from group (host is None)
+    }
+
+    #[test]
+    fn group_commands_override_defaults() {
+        let defaults = JobDefaults {
+            username: Some("sherpa".into()),
+            device_type: Some(DeviceKind::CiscoIos),
+            ..Default::default()
+        };
+        let group = JobGroup {
+            name: "special".into(),
+            username: None,
+            password: None,
+            key_file: None,
+            key_passphrase: None,
+            port: None,
+            timeout: None,
+            legacy_crypto: None,
+            device_type: None,
+            commands: vec!["show inventory".into()],
+        };
+        let entry = JobHostEntry {
+            name: "r1".into(),
+            host: "10.0.0.1".into(),
+            group: Some("special".into()),
+            username: None,
+            password: None,
+            key_file: None,
+            key_passphrase: None,
+            port: None,
+            timeout: None,
+            legacy_crypto: None,
+            device_type: None,
+        };
+        let default_commands = vec!["show version".into()];
+        let r = resolve_host(&entry, Some(&group), &defaults, &Defaults::default(), &default_commands, None).unwrap();
+        assert_eq!(r.commands, vec!["show inventory".to_string()]);
+    }
+
+    #[test]
+    fn invalid_group_reference_errors() {
+        let toml_str = r#"
+[defaults]
+username = "sherpa"
+device_type = "cisco_ios"
+commands = ["show version"]
+
+[[hosts]]
+name = "r1"
+host = "10.0.0.1"
+group = "nonexistent"
+"#;
+        let _job: JobFile = toml::from_str(toml_str).unwrap();
+        // load() validates group references, so we test via load with a temp file
+        let tmp = std::env::temp_dir().join("sshinto_test_invalid_group.toml");
+        std::fs::write(&tmp, toml_str).unwrap();
+        let err = JobFile::load(tmp.to_str().unwrap()).unwrap_err();
+        assert!(matches!(err, ConfigError::InvalidGroup(_)));
+        std::fs::remove_file(&tmp).unwrap();
+    }
+
+    #[test]
+    fn parse_jobfile_with_groups() {
+        let toml_str = r#"
+[defaults]
+username = "sherpa"
+commands = ["show version"]
+
+[[groups]]
+name = "ios_devices"
+device_type = "cisco_ios"
+legacy_crypto = true
+timeout = 10
+
+[[groups]]
+name = "eos_devices"
+device_type = "arista_eos"
+timeout = 15
+
+[[hosts]]
+name = "lab-router"
+host = "172.31.0.11"
+group = "ios_devices"
+
+[[hosts]]
+name = "core-switch"
+host = "10.0.1.1"
+group = "eos_devices"
+username = "admin"
+"#;
+        let job: JobFile = toml::from_str(toml_str).unwrap();
+        assert_eq!(job.groups.len(), 2);
+        assert_eq!(job.groups[0].name, "ios_devices");
+        assert_eq!(job.groups[0].device_type, Some(DeviceKind::CiscoIos));
+        assert_eq!(job.groups[1].name, "eos_devices");
+        assert_eq!(job.hosts[0].group.as_deref(), Some("ios_devices"));
+        assert_eq!(job.hosts[1].group.as_deref(), Some("eos_devices"));
     }
 
     #[test]
