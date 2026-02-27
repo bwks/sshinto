@@ -183,6 +183,50 @@ You can also override the jump host from the CLI, which takes priority over anyt
 sshinto job ./upgrade.toml -J admin@bastion --jumphost-key-file ~/.ssh/id_ed25519
 ```
 
+### Uploading files via SCP
+
+Upload a local file to a remote device:
+
+```bash
+sshinto scp -h 172.31.0.11 -U sherpa -k ~/.ssh/id_ed25519 --source config.txt --dest /tmp/config.txt
+```
+
+With a jump host:
+
+```bash
+sshinto scp -h 172.31.0.11 -U sherpa -k ~/.ssh/id_ed25519 \
+  -J admin@bastion --jumphost-key-file ~/.ssh/id_ed25519 \
+  --source config.txt --dest /tmp/config.txt
+```
+
+The default transfer timeout is 30 seconds; override with `-t`:
+
+```bash
+sshinto scp -h 172.31.0.11 -U sherpa -k ~/.ssh/id_ed25519 --source bigfile.bin --dest /tmp/bigfile.bin -t 120
+```
+
+### Uploading files in jobs
+
+Jobs can upload files to each host before running commands. Add `[[defaults.uploads]]`, `[[groups.uploads]]`, or `[[hosts.uploads]]` entries:
+
+```toml
+[defaults]
+username = "sherpa"
+key_file = "~/.ssh/id_ed25519"
+device_type = "cisco_ios"
+commands = ["show version"]
+
+[[defaults.uploads]]
+source = "configs/acl.txt"
+dest = "/tmp/acl.txt"
+
+[[hosts]]
+name = "dev01"
+host = "172.31.0.11"
+```
+
+Uploads inherit with the same priority as other fields: host entry > group > defaults. A job with only uploads and no commands is also valid.
+
 ## Supported device types
 
 - `cisco_ios`

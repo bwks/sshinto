@@ -6,7 +6,7 @@ edition.workspace = true
 [dependencies]
 models = { path = "../models" }
 russh = "0.57.0"
-tokio = { version = "1", features = ["net", "time", "rt", "io-util"] }
+tokio = { version = "1", features = ["net", "time", "rt", "io-util", "fs"] }
 thiserror = "2"
 log = "0.4"
 regex = "1"

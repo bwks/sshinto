@@ -29,6 +29,7 @@ target
 sshinto.toml
 *_job.toml
 output/
+*.txt 
 
 # test devices
 sherpa_ssh*

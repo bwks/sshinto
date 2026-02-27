@@ -5,8 +5,9 @@ mod writer;
 
 use clap::Parser;
 use cli::{Cli, Commands};
-use config::ResolvedArgs;
-use lib_sshinto::{ConnectConfig, Credential, JumpHost, Session};
+use config::{ResolvedArgs, ResolvedScpArgs};
+use lib_sshinto::{ConnectConfig, Connection, Credential, JumpHost, Session};
+use std::path::Path;
 use std::time::Duration;
 
 #[tokio::main]
@@ -31,6 +32,22 @@ async fn main() {
             }
         }
         Commands::Job(args) => job::run_job(&args).await,
+        Commands::Scp(args) => {
+            let config = match config::Config::load() {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
+            };
+            match config::resolve_scp(&args, &config) {
+                Ok(resolved) => run_scp(resolved).await,
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
     };
 
     if let Err(e) = result {
@@ -147,6 +164,52 @@ async fn run(args: ResolvedArgs) -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(e) => eprintln!("Error creating output directory: {e}"),
         }
+    }
+
+    Ok(())
+}
+
+async fn run_scp(args: ResolvedScpArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let credential = if let Some(ref key_path) = args.key_file {
+        Credential::PrivateKeyFile {
+            path: key_path.clone(),
+            passphrase: args.key_passphrase.clone(),
+        }
+    } else if let Some(ref pw) = args.password {
+        Credential::Password(pw.clone())
+    } else {
+        eprint!("Password for {}@{}: ", args.username, args.host);
+        let pw = rpassword::read_password()?;
+        Credential::Password(pw)
+    };
+
+    let jump = match args.jump_host {
+        Some(jh) => Some(build_jump_host(jh)?),
+        None => None,
+    };
+
+    let config = ConnectConfig {
+        legacy_crypto: args.legacy_crypto,
+        jumphost: jump,
+        ..Default::default()
+    };
+
+    let timeout_dur = Duration::from_secs(args.timeout);
+
+    eprintln!("Connecting to {}:{}...", args.host, args.port);
+
+    let conn =
+        Connection::connect(&args.host, args.port, &args.username, credential, config).await?;
+
+    eprintln!("Uploading {} -> {}...", args.source, args.dest);
+
+    conn.upload_file(Path::new(&args.source), &args.dest, timeout_dur)
+        .await?;
+
+    eprintln!("Upload complete.");
+
+    if let Err(e) = conn.close().await {
+        eprintln!("Close error: {e}");
     }
 
     Ok(())

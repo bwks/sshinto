@@ -3,11 +3,11 @@ use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Duration;
 
-use lib_sshinto::{ConnectConfig, Credential, JumpHost, Session};
+use lib_sshinto::{ConnectConfig, Connection, Credential, JumpHost};
 use tokio::sync::Semaphore;
 
 use crate::cli::JobArgs;
-use crate::config::{parse_jump_spec, Config, ConfigError, Defaults, JumpHostResolved, ResolvedArgs};
+use crate::config::{parse_jump_spec, Config, ConfigError, Defaults, JumpHostResolved, ResolvedArgs, ScpUpload};
 use crate::writer;
 
 // ── Jobfile structs ─────────────────────────────────────────────────
@@ -40,6 +40,8 @@ pub struct JobDefaults {
     pub jumphost_key_file: Option<String>,
     pub jumphost_key_passphrase: Option<String>,
     pub jumphost_legacy_crypto: Option<bool>,
+    #[serde(default)]
+    pub uploads: Vec<ScpUpload>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -61,6 +63,8 @@ pub struct JobGroup {
     pub jumphost_key_file: Option<String>,
     pub jumphost_key_passphrase: Option<String>,
     pub jumphost_legacy_crypto: Option<bool>,
+    #[serde(default)]
+    pub uploads: Vec<ScpUpload>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -82,6 +86,8 @@ pub struct JobHostEntry {
     pub jumphost_key_file: Option<String>,
     pub jumphost_key_passphrase: Option<String>,
     pub jumphost_legacy_crypto: Option<bool>,
+    #[serde(default)]
+    pub uploads: Vec<ScpUpload>,
 }
 
 // ── Loading ─────────────────────────────────────────────────────────
@@ -104,17 +110,20 @@ impl JobFile {
             }
         }
 
-        // Commands must come from defaults or every host must get them from its group.
+        // Commands must come from defaults or every host must get them from its group,
+        // unless uploads are provided (a job with only uploads and no commands is valid).
+        let has_default_uploads = !job.defaults.uploads.is_empty();
         if job.defaults.commands.is_empty() {
             let missing = job.hosts.iter().any(|h| {
-                match &h.group {
-                    Some(gn) => job
-                        .groups
-                        .iter()
-                        .find(|g| g.name == *gn)
-                        .map_or(true, |g| g.commands.is_empty()),
-                    None => true,
-                }
+                let group = h
+                    .group
+                    .as_ref()
+                    .and_then(|gn| job.groups.iter().find(|g| g.name == *gn));
+                let has_cmds = group.map_or(false, |g| !g.commands.is_empty());
+                let has_uploads = !h.uploads.is_empty()
+                    || group.map_or(false, |g| !g.uploads.is_empty())
+                    || has_default_uploads;
+                !has_cmds && !has_uploads
             });
             if missing {
                 return Err(ConfigError::MissingField("commands"));
@@ -220,6 +229,19 @@ fn resolve_host(
         _ => commands,
     };
 
+    // Uploads: host entry uploads if non-empty, else group uploads, else defaults uploads.
+    let resolved_uploads = if !entry.uploads.is_empty() {
+        entry.uploads.clone()
+    } else if let Some(g) = group {
+        if !g.uploads.is_empty() {
+            g.uploads.clone()
+        } else {
+            defaults.uploads.clone()
+        }
+    } else {
+        defaults.uploads.clone()
+    };
+
     let output_dir = defaults.output_dir.clone();
 
     // Resolve jump host: CLI override > host entry > group > job defaults > config defaults
@@ -312,6 +334,7 @@ fn resolve_host(
         timeout,
         output_dir,
         jump_host,
+        uploads: resolved_uploads,
     })
 }
 
@@ -391,8 +414,20 @@ async fn run_single_host_inner(
     let profile = args.device_type.profile();
     let prompt_re = profile.prompt_regex();
 
-    let mut session =
-        Session::connect(&args.host, args.port, &args.username, credential, config).await?;
+    let conn =
+        Connection::connect(&args.host, args.port, &args.username, credential, config).await?;
+
+    // Upload files before opening the shell channel (some devices like Cisco IOS
+    // only support one channel at a time).
+    for upload in &args.uploads {
+        let source = std::path::Path::new(&upload.source);
+        match conn.upload_file(source, &upload.dest, timeout_dur).await {
+            Ok(()) => eprintln!("[{name}] Uploaded {} -> {}", upload.source, upload.dest),
+            Err(e) => return Err(format!("upload {} -> {}: {e}", upload.source, upload.dest).into()),
+        }
+    }
+
+    let mut session = conn.open_shell().await?;
 
     // Drain leftover output and get to a clean prompt
     let _ = session.write(b"\n").await;
@@ -609,6 +644,7 @@ username = "admin"
             jumphost_key_file: None,
             jumphost_key_passphrase: None,
             jumphost_legacy_crypto: None,
+            uploads: vec![],
         };
         let commands = vec!["show version".into()];
         let r = resolve_host(&entry, None, &defaults, &Defaults::default(), &commands, Some("pass123"), None).unwrap();
@@ -645,6 +681,7 @@ username = "admin"
             jumphost_key_file: None,
             jumphost_key_passphrase: None,
             jumphost_legacy_crypto: None,
+            uploads: vec![],
         };
         let commands = vec!["show version".into()];
         let r = resolve_host(&entry, None, &defaults, &Defaults::default(), &commands, None, None).unwrap();
@@ -678,6 +715,7 @@ username = "admin"
             jumphost_key_file: None,
             jumphost_key_passphrase: None,
             jumphost_legacy_crypto: None,
+            uploads: vec![],
         };
         let err = resolve_host(&entry, None, &defaults, &Defaults::default(), &["show ver".into()], None, None).unwrap_err();
         assert!(matches!(err, ConfigError::MissingField("username")));
@@ -708,6 +746,7 @@ username = "admin"
             jumphost_key_file: None,
             jumphost_key_passphrase: None,
             jumphost_legacy_crypto: None,
+            uploads: vec![],
         };
         let entry = JobHostEntry {
             name: "sw1".into(),
@@ -727,6 +766,7 @@ username = "admin"
             jumphost_key_file: None,
             jumphost_key_passphrase: None,
             jumphost_legacy_crypto: None,
+            uploads: vec![],
         };
         let commands = vec!["show version".into()];
         let r = resolve_host(&entry, Some(&group), &defaults, &Defaults::default(), &commands, None, None).unwrap();
@@ -760,6 +800,7 @@ username = "admin"
             jumphost_key_file: None,
             jumphost_key_passphrase: None,
             jumphost_legacy_crypto: None,
+            uploads: vec![],
         };
         let entry = JobHostEntry {
             name: "r1".into(),
@@ -779,6 +820,7 @@ username = "admin"
             jumphost_key_file: None,
             jumphost_key_passphrase: None,
             jumphost_legacy_crypto: None,
+            uploads: vec![],
         };
         let commands = vec!["show version".into()];
         let r = resolve_host(&entry, Some(&group), &defaults, &Defaults::default(), &commands, None, None).unwrap();
@@ -811,6 +853,7 @@ username = "admin"
             jumphost_key_file: None,
             jumphost_key_passphrase: None,
             jumphost_legacy_crypto: None,
+            uploads: vec![],
         };
         let entry = JobHostEntry {
             name: "r1".into(),
@@ -830,6 +873,7 @@ username = "admin"
             jumphost_key_file: None,
             jumphost_key_passphrase: None,
             jumphost_legacy_crypto: None,
+            uploads: vec![],
         };
         let default_commands = vec!["show version".into()];
         let r = resolve_host(&entry, Some(&group), &defaults, &Defaults::default(), &default_commands, None, None).unwrap();
@@ -930,6 +974,7 @@ username = "admin"
             jumphost_key_file: None,
             jumphost_key_passphrase: None,
             jumphost_legacy_crypto: None,
+            uploads: vec![],
         };
         let commands = vec!["show version".into()];
         let r = resolve_host(&entry, None, &defaults, &Defaults::default(), &commands, None, None).unwrap();
@@ -967,6 +1012,7 @@ username = "admin"
             jumphost_key_file: None,
             jumphost_key_passphrase: None,
             jumphost_legacy_crypto: None,
+            uploads: vec![],
         };
         let commands = vec!["show version".into()];
         let cli_jh = CliJumpOverride {

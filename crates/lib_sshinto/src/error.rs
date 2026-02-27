@@ -20,6 +20,9 @@ pub enum SshintoError {
 
     #[error("Channel closed before prompt matched")]
     ChannelClosed,
+
+    #[error("SCP error: {0}")]
+    ScpError(String),
 }
 
 pub type Result<T> = std::result::Result<T, SshintoError>;
