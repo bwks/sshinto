@@ -11,6 +11,7 @@ pub enum DeviceKind {
     CiscoNxos,
     JuniperJunos,
     AristaEos,
+    NokiaSrlinux,
 }
 
 #[derive(Debug, Clone)]
@@ -107,6 +108,22 @@ const ARISTA_EOS: DeviceProfile = DeviceProfile {
     base_path: "/mnt/flash/",
 };
 
+const NOKIA_SRLINUX: DeviceProfile = DeviceProfile {
+    kind: DeviceKind::NokiaSrlinux,
+    name: "Nokia SR Linux",
+    // "A:dev04#" or "A:admin@dev04#"
+    prompt_pattern: r"[A-D]:[\w\-\.@]+#\s*$",
+    // Same — no separate privileged mode
+    privileged_prompt_pattern: r"[A-D]:[\w\-\.@]+#\s*$",
+    // Same — config mode changes banner, not prompt line
+    config_prompt_pattern: r"[A-D]:[\w\-\.@]+#\s*$",
+    paging_disable: "environment cli-engine type basic",
+    line_separator: "\n",
+    exit_config_command: "quit",
+    enable_command: "",
+    base_path: "/tmp/",
+};
+
 impl DeviceKind {
     pub fn profile(&self) -> &'static DeviceProfile {
         match self {
@@ -115,6 +132,7 @@ impl DeviceKind {
             DeviceKind::CiscoNxos => &CISCO_NXOS,
             DeviceKind::JuniperJunos => &JUNIPER_JUNOS,
             DeviceKind::AristaEos => &ARISTA_EOS,
+            DeviceKind::NokiaSrlinux => &NOKIA_SRLINUX,
         }
     }
 }
@@ -129,12 +147,13 @@ impl DeviceProfile {
 mod tests {
     use super::*;
 
-    const ALL_KINDS: [DeviceKind; 5] = [
+    const ALL_KINDS: [DeviceKind; 6] = [
         DeviceKind::CiscoIos,
         DeviceKind::CiscoIosXr,
         DeviceKind::CiscoNxos,
         DeviceKind::JuniperJunos,
         DeviceKind::AristaEos,
+        DeviceKind::NokiaSrlinux,
     ];
 
     #[test]
@@ -149,6 +168,11 @@ mod tests {
                 "set cli screen-length 0",
             ),
             (DeviceKind::AristaEos, "Arista EOS", "terminal length 0"),
+            (
+                DeviceKind::NokiaSrlinux,
+                "Nokia SR Linux",
+                "environment cli-engine type basic",
+            ),
         ];
         for (kind, expected_name, expected_paging) in cases {
             let p = kind.profile();
@@ -204,6 +228,18 @@ mod tests {
         assert!(re.is_match("router01(config)#"));
         assert!(re.is_match("sw-01(config-if)#"));
         assert!(!re.is_match("router01#"));
+    }
+
+    #[test]
+    fn nokia_srlinux_prompt_matches() {
+        let p = DeviceKind::NokiaSrlinux.profile();
+        let re = p.prompt_regex();
+        assert!(re.is_match("A:dev04#"));
+        assert!(re.is_match("A:admin@dev04#"));
+        assert!(re.is_match("B:srl-router.lab#"));
+        assert!(!re.is_match(""));
+        assert!(!re.is_match("dev04#"));
+        assert!(!re.is_match("not a prompt"));
     }
 
     #[test]

@@ -19,7 +19,7 @@ You can also use the username `sherpa` and ssh key `sherpa_ssh_key`
 Use these device to test the implementation.
 
 ### Test Devices
-- dev01 | Cisco IOS | 172.31.0.11
-- dev02 | Cisco IOS-XE | 172.31.0.12
-- dev03 | Arista EOS | 172.31.0.13
-- dev04 | Arista EOS | 172.31.0.14
+- dev01 | Cisco IOS | 172.31.1.11
+- dev02 | Cisco IOS-XE | 172.31.1.12  
+- dev03 | Arista EOS | 172.31.1.13
+- dev04 | Nokia SRLinux | 172.31.1.14
