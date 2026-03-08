@@ -21,6 +21,8 @@ pub enum Commands {
     Job(JobArgs),
     /// Upload a file to a remote device via SCP
     Scp(ScpArgs),
+    /// Check SSH connectivity and prompt detection
+    Check(CheckArgs),
 }
 
 #[derive(Parser)]
@@ -68,6 +70,65 @@ pub struct RunArgs {
     /// Save output to file (default: output/{host}/{timestamp}/output.txt)
     #[arg(short = 'o', long)]
     pub output_dir: Option<String>,
+
+    /// Jump host (user@host:port)
+    #[arg(short = 'J', long)]
+    pub jumphost: Option<String>,
+
+    /// Jump host username (overrides username parsed from -J spec)
+    #[arg(long)]
+    pub jumphost_username: Option<String>,
+
+    /// Jump host password (omit to prompt or use key)
+    #[arg(long)]
+    pub jumphost_password: Option<String>,
+
+    /// Jump host SSH key file
+    #[arg(long)]
+    pub jumphost_key_file: Option<String>,
+
+    /// Jump host key passphrase
+    #[arg(long)]
+    pub jumphost_key_passphrase: Option<String>,
+
+    /// Enable legacy crypto for jump host
+    #[arg(long)]
+    pub jumphost_legacy_crypto: bool,
+}
+
+#[derive(Parser)]
+pub struct CheckArgs {
+    /// Target host (IP or hostname)
+    #[arg(short = 'h', long)]
+    pub host: Option<String>,
+
+    /// SSH port
+    #[arg(short = 'p', long)]
+    pub port: Option<u16>,
+
+    /// Username
+    #[arg(short = 'U', long)]
+    pub username: Option<String>,
+
+    /// Password (omit to prompt interactively)
+    #[arg(short = 'P', long)]
+    pub password: Option<String>,
+
+    /// Path to SSH private key file
+    #[arg(short = 'k', long)]
+    pub key_file: Option<String>,
+
+    /// Passphrase for the private key
+    #[arg(long)]
+    pub key_passphrase: Option<String>,
+
+    /// Device type
+    #[arg(short = 'd', long)]
+    pub device_type: Option<DeviceKind>,
+
+    /// Enable legacy SSH crypto algorithms
+    #[arg(long)]
+    pub legacy_crypto: bool,
 
     /// Jump host (user@host:port)
     #[arg(short = 'J', long)]

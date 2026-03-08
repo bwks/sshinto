@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::fmt;
 use std::path::PathBuf;
 
-use crate::cli::{RunArgs, ScpArgs};
+use crate::cli::{CheckArgs, RunArgs, ScpArgs};
 
 // ── Error type ──────────────────────────────────────────────────────
 
@@ -95,6 +95,19 @@ pub struct ResolvedArgs {
     pub output_dir: Option<String>,
     pub jump_host: Option<JumpHostResolved>,
     pub uploads: Vec<ScpUpload>,
+}
+
+#[derive(Debug)]
+pub struct ResolvedCheckArgs {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub password: Option<String>,
+    pub key_file: Option<String>,
+    pub key_passphrase: Option<String>,
+    pub device_type: DeviceKind,
+    pub legacy_crypto: bool,
+    pub jump_host: Option<JumpHostResolved>,
 }
 
 #[derive(Debug)]
@@ -362,6 +375,95 @@ pub fn resolve_scp(cli: &ScpArgs, config: &Config) -> Result<ResolvedScpArgs, Co
         source: cli.source.clone(),
         dest: cli.dest.clone(),
         timeout,
+        jump_host,
+    })
+}
+
+/// Merge CLI → defaults → hardcoded defaults for check.
+pub fn resolve_check(cli: &CheckArgs, config: &Config) -> Result<ResolvedCheckArgs, ConfigError> {
+    macro_rules! pick {
+        ($cli_field:expr, $def:ident . $dfield:ident) => {
+            $cli_field
+                .clone()
+                .or_else(|| config.defaults.$dfield.clone())
+        };
+    }
+
+    let host = cli.host.clone().ok_or(ConfigError::MissingField("host"))?;
+
+    let username =
+        pick!(cli.username, defaults.username).ok_or(ConfigError::MissingField("username"))?;
+
+    let device_type = cli
+        .device_type
+        .or(config.defaults.device_type)
+        .ok_or(ConfigError::MissingField("device_type"))?;
+
+    let port = cli.port.or(config.defaults.port).unwrap_or(22);
+
+    let legacy_crypto = if cli.legacy_crypto {
+        true
+    } else {
+        config.defaults.legacy_crypto.unwrap_or(false)
+    };
+
+    let password = pick!(cli.password, defaults.password);
+    let key_file = pick!(cli.key_file, defaults.key_file);
+    let key_passphrase = pick!(cli.key_passphrase, defaults.key_passphrase);
+
+    // Resolve jump host
+    let jump_spec = cli
+        .jumphost
+        .clone()
+        .or_else(|| config.defaults.jumphost.clone());
+
+    let jump_host = if let Some(spec) = jump_spec {
+        let (jh_host, jh_port, mut jh_username) = parse_jump_spec(&spec, &username);
+
+        if let Some(ref explicit_user) = cli.jumphost_username.clone().or_else(|| config.defaults.jumphost_username.clone()) {
+            jh_username = explicit_user.clone();
+        }
+
+        let jh_password = cli
+            .jumphost_password
+            .clone()
+            .or_else(|| config.defaults.jumphost_password.clone());
+        let jh_key_file = cli
+            .jumphost_key_file
+            .clone()
+            .or_else(|| config.defaults.jumphost_key_file.clone());
+        let jh_key_passphrase = cli
+            .jumphost_key_passphrase
+            .clone()
+            .or_else(|| config.defaults.jumphost_key_passphrase.clone());
+        let jh_legacy_crypto = if cli.jumphost_legacy_crypto {
+            true
+        } else {
+            config.defaults.jumphost_legacy_crypto.unwrap_or(false)
+        };
+
+        Some(JumpHostResolved {
+            host: jh_host,
+            port: jh_port,
+            username: jh_username,
+            password: jh_password,
+            key_file: jh_key_file,
+            key_passphrase: jh_key_passphrase,
+            legacy_crypto: jh_legacy_crypto,
+        })
+    } else {
+        None
+    };
+
+    Ok(ResolvedCheckArgs {
+        host,
+        port,
+        username,
+        password,
+        key_file,
+        key_passphrase,
+        device_type,
+        legacy_crypto,
         jump_host,
     })
 }

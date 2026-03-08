@@ -5,8 +5,8 @@ mod writer;
 
 use clap::Parser;
 use cli::{Cli, Commands};
-use config::{ResolvedArgs, ResolvedScpArgs};
-use lib_sshinto::{ConnectConfig, Connection, Credential, JumpHost, Session};
+use config::{ResolvedArgs, ResolvedCheckArgs, ResolvedScpArgs};
+use lib_sshinto::{strip_ansi, ConnectConfig, Connection, Credential, JumpHost, Session};
 use models::DeviceKind;
 use std::path::Path;
 use std::time::Duration;
@@ -61,6 +61,22 @@ async fn main() {
             };
             match config::resolve_scp(&args, &config) {
                 Ok(resolved) => run_scp(resolved).await,
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Check(args) => {
+            let config = match config::Config::load() {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
+            };
+            match config::resolve_check(&args, &config) {
+                Ok(resolved) => run_check(resolved).await,
                 Err(e) => {
                     eprintln!("Error: {e}");
                     std::process::exit(1);
@@ -183,6 +199,72 @@ async fn run(args: ResolvedArgs) -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(e) => eprintln!("Error creating output directory: {e}"),
         }
+    }
+
+    Ok(())
+}
+
+async fn run_check(args: ResolvedCheckArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let credential = if let Some(ref key_path) = args.key_file {
+        Credential::PrivateKeyFile {
+            path: key_path.clone(),
+            passphrase: args.key_passphrase.clone(),
+        }
+    } else if let Some(ref pw) = args.password {
+        Credential::Password(pw.clone())
+    } else {
+        eprint!("Password for {}@{}: ", args.username, args.host);
+        let pw = rpassword::read_password()?;
+        Credential::Password(pw)
+    };
+
+    let jump = match args.jump_host {
+        Some(jh) => Some(build_jump_host(jh)?),
+        None => None,
+    };
+
+    let config = ConnectConfig {
+        legacy_crypto: args.legacy_crypto,
+        jumphost: jump,
+        ..Default::default()
+    };
+
+    let profile = args.device_type.profile();
+    let prompt_re = profile.prompt_regex();
+
+    eprintln!("Connecting to {}:{}...", args.host, args.port);
+
+    let mut session =
+        Session::connect(&args.host, args.port, &args.username, credential, config).await?;
+
+    eprintln!("Connected. Checking prompt...");
+
+    // Drain initial banner (may timeout on some devices, that's OK)
+    let _ = session.write(b"\n").await;
+    let _ = session
+        .read_until_prompt_re(&prompt_re, Duration::from_secs(5))
+        .await;
+
+    // Send a newline and wait for the prompt
+    let _ = session.write(b"\n").await;
+
+    match session
+        .read_until_prompt_re(&prompt_re, Duration::from_secs(10))
+        .await
+    {
+        Ok(output) => {
+            let clean = strip_ansi(&output);
+            let prompt_line = clean.trim_end().lines().last().unwrap_or(&clean);
+            eprintln!("Prompt detected: {}", prompt_line.trim());
+            eprintln!("Check passed for {} ({:?})", args.host, args.device_type);
+        }
+        Err(e) => {
+            eprintln!("Prompt detection failed for {}: {e}", args.host);
+        }
+    }
+
+    if let Err(e) = session.close().await {
+        eprintln!("Close error: {e}");
     }
 
     Ok(())

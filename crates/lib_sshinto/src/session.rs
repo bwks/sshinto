@@ -414,13 +414,15 @@ impl Session {
                 match self.reader.wait().await {
                     Some(ChannelMsg::Data { data }) => {
                         buffer.push_str(&String::from_utf8_lossy(&data));
-                        if prompt_re.is_match(buffer.trim_end()) {
+                        let clean = strip_ansi(&buffer);
+                        if prompt_re.is_match(clean.trim_end()) {
                             return Ok(buffer);
                         }
                     }
                     Some(ChannelMsg::ExtendedData { data, .. }) => {
                         buffer.push_str(&String::from_utf8_lossy(&data));
-                        if prompt_re.is_match(buffer.trim_end()) {
+                        let clean = strip_ansi(&buffer);
+                        if prompt_re.is_match(clean.trim_end()) {
                             return Ok(buffer);
                         }
                     }
@@ -568,4 +570,26 @@ async fn drain_initial(reader: &mut russh::ChannelReadHalf, wait: Duration) -> S
     })
     .await;
     buffer
+}
+
+/// Strip ANSI escape sequences (CSI sequences) so prompt regexes can match cleanly.
+pub fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            if let Some(next) = chars.next() {
+                if next == '[' {
+                    for c2 in chars.by_ref() {
+                        if c2.is_ascii_alphabetic() || c2 == '~' {
+                            break;
+                        }
+                    }
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
