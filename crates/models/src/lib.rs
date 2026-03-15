@@ -7,11 +7,14 @@ use regex::Regex;
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum DeviceKind {
     CiscoIos,
-    CiscoIosXr,
+    CiscoIosxr,
     CiscoNxos,
     JuniperJunos,
     AristaEos,
     NokiaSrlinux,
+    MikrotikRos,
+    ArubaAos,
+    Linux,
 }
 
 #[derive(Debug, Clone)]
@@ -45,7 +48,7 @@ const CISCO_IOS: DeviceProfile = DeviceProfile {
 };
 
 const CISCO_IOS_XR: DeviceProfile = DeviceProfile {
-    kind: DeviceKind::CiscoIosXr,
+    kind: DeviceKind::CiscoIosxr,
     name: "Cisco IOS-XR",
     // "RP/0/RSP0/CPU0:router01#" or "RP/0/RSP0/CPU0:router01>"
     prompt_pattern: r"RP/\d+/[\w/]+:[\w\-\.]+[#>]\s*$",
@@ -124,15 +127,66 @@ const NOKIA_SRLINUX: DeviceProfile = DeviceProfile {
     base_path: "/tmp/",
 };
 
+const MIKROTIK_ROS: DeviceProfile = DeviceProfile {
+    kind: DeviceKind::MikrotikRos,
+    name: "MikroTik RouterOS",
+    // "[admin@MikroTik] >" or "[admin@R1] /ip/route>"
+    prompt_pattern: r"\].*>\s*$",
+    // Same — no separate privileged mode
+    privileged_prompt_pattern: r"\].*>\s*$",
+    // Same — no separate config mode
+    config_prompt_pattern: r"\].*>\s*$",
+    paging_disable: "",
+    line_separator: "\n",
+    exit_config_command: "/",
+    enable_command: "",
+    base_path: "/",
+};
+
+const ARUBA_AOS: DeviceProfile = DeviceProfile {
+    kind: DeviceKind::ArubaAos,
+    name: "Aruba AOS-CX",
+    // "dev07#" or "dev07>"
+    prompt_pattern: r"[\w\-\.]+[#>]\s*$",
+    // "dev07#"
+    privileged_prompt_pattern: r"[\w\-\.]+#\s*$",
+    // "dev07(config)#"
+    config_prompt_pattern: r"[\w\-\.]+\([\w\-]+\)#\s*$",
+    paging_disable: "no page",
+    line_separator: "\n",
+    exit_config_command: "end",
+    enable_command: "enable",
+    base_path: "/tmp/",
+};
+
+const LINUX: DeviceProfile = DeviceProfile {
+    kind: DeviceKind::Linux,
+    name: "Linux",
+    // "user@host:~$" or "host:~$" or "user@host:~#"
+    prompt_pattern: r"[\w\-\.@]+:[\w~\/\-\.]+[\$#]\s*$",
+    // root prompt "host:~#"
+    privileged_prompt_pattern: r"[\w\-\.@]+:[\w~\/\-\.]+#\s*$",
+    // No config mode
+    config_prompt_pattern: r"[\w\-\.@]+:[\w~\/\-\.]+#\s*$",
+    paging_disable: "",
+    line_separator: "\n",
+    exit_config_command: "",
+    enable_command: "",
+    base_path: "/tmp/",
+};
+
 impl DeviceKind {
     pub fn profile(&self) -> &'static DeviceProfile {
         match self {
             DeviceKind::CiscoIos => &CISCO_IOS,
-            DeviceKind::CiscoIosXr => &CISCO_IOS_XR,
+            DeviceKind::CiscoIosxr => &CISCO_IOS_XR,
             DeviceKind::CiscoNxos => &CISCO_NXOS,
             DeviceKind::JuniperJunos => &JUNIPER_JUNOS,
             DeviceKind::AristaEos => &ARISTA_EOS,
             DeviceKind::NokiaSrlinux => &NOKIA_SRLINUX,
+            DeviceKind::MikrotikRos => &MIKROTIK_ROS,
+            DeviceKind::ArubaAos => &ARUBA_AOS,
+            DeviceKind::Linux => &LINUX,
         }
     }
 }
@@ -147,20 +201,23 @@ impl DeviceProfile {
 mod tests {
     use super::*;
 
-    const ALL_KINDS: [DeviceKind; 6] = [
+    const ALL_KINDS: [DeviceKind; 9] = [
         DeviceKind::CiscoIos,
-        DeviceKind::CiscoIosXr,
+        DeviceKind::CiscoIosxr,
         DeviceKind::CiscoNxos,
         DeviceKind::JuniperJunos,
         DeviceKind::AristaEos,
         DeviceKind::NokiaSrlinux,
+        DeviceKind::MikrotikRos,
+        DeviceKind::ArubaAos,
+        DeviceKind::Linux,
     ];
 
     #[test]
     fn profile_returns_correct_name_and_paging() {
         let cases = [
             (DeviceKind::CiscoIos, "Cisco IOS", "terminal length 0"),
-            (DeviceKind::CiscoIosXr, "Cisco IOS-XR", "terminal length 0"),
+            (DeviceKind::CiscoIosxr, "Cisco IOS-XR", "terminal length 0"),
             (DeviceKind::CiscoNxos, "Cisco NX-OS", "terminal length 0"),
             (
                 DeviceKind::JuniperJunos,
@@ -173,6 +230,13 @@ mod tests {
                 "Nokia SR Linux",
                 "environment cli-engine type basic",
             ),
+            (
+                DeviceKind::MikrotikRos,
+                "MikroTik RouterOS",
+                "",
+            ),
+            (DeviceKind::ArubaAos, "Aruba AOS-CX", "no page"),
+            (DeviceKind::Linux, "Linux", ""),
         ];
         for (kind, expected_name, expected_paging) in cases {
             let p = kind.profile();
@@ -204,7 +268,7 @@ mod tests {
 
     #[test]
     fn cisco_iosxr_prompt_matches() {
-        let p = DeviceKind::CiscoIosXr.profile();
+        let p = DeviceKind::CiscoIosxr.profile();
         let re = p.prompt_regex();
         assert!(re.is_match("RP/0/RSP0/CPU0:router01#"));
         assert!(re.is_match("RP/0/RSP0/CPU0:router01>"));
@@ -239,6 +303,41 @@ mod tests {
         assert!(re.is_match("B:srl-router.lab#"));
         assert!(!re.is_match(""));
         assert!(!re.is_match("dev04#"));
+        assert!(!re.is_match("not a prompt"));
+    }
+
+    #[test]
+    fn mikrotik_routeros_prompt_matches() {
+        let p = DeviceKind::MikrotikRos.profile();
+        let re = p.prompt_regex();
+        assert!(re.is_match("[admin@MikroTik] >"));
+        assert!(re.is_match("[admin@MikroTik] > "));
+        assert!(re.is_match("[admin@R1] /ip/route>"));
+        assert!(re.is_match("[admin@router.lab] /ip/address>"));
+        assert!(!re.is_match(""));
+        assert!(!re.is_match("not a prompt"));
+    }
+
+    #[test]
+    fn aruba_aoscx_prompt_matches() {
+        let p = DeviceKind::ArubaAos.profile();
+        let re = p.prompt_regex();
+        assert!(re.is_match("dev07#"));
+        assert!(re.is_match("switch01>"));
+        assert!(re.is_match("core-sw.lab#"));
+        assert!(!re.is_match(""));
+        assert!(!re.is_match("not a prompt"));
+    }
+
+    #[test]
+    fn linux_prompt_matches() {
+        let p = DeviceKind::Linux.profile();
+        let re = p.prompt_regex();
+        assert!(re.is_match("sherpa@dev08:~$"));
+        assert!(re.is_match("dev06:~$"));
+        assert!(re.is_match("root@host:/tmp#"));
+        assert!(re.is_match("user@server:/var/log$"));
+        assert!(!re.is_match(""));
         assert!(!re.is_match("not a prompt"));
     }
 

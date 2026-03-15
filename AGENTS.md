@@ -5,6 +5,9 @@ initally over SSH and apply config or return data.
 The goal is to abstract the nuances of handling this process across
 multiple network vendors and linux/bsd hosts.
 
+## Documentation
+- Always update the README.md file with relevant information based on the changes made in code.
+
 ## Project Structure
 - `lib_sshinto` - Library functionality for project.
 - `sshinto` - CLI utility crate. 
@@ -23,3 +26,8 @@ Use these device to test the implementation.
 - dev02 | Cisco IOS-XE | 172.31.1.12  
 - dev03 | Arista EOS | 172.31.1.13
 - dev04 | Nokia SRLinux | 172.31.1.14
+- dev05 | Mikrotik Ros | 172.31.1.15
+- dev06 | Frrouting Linux | 172.31.1.16
+- dev07 | Aruba AOS | 172.31.1.17
+- dev08 | Sonic Linux | 172.31.1.18
+- dev09 | Cisco IOS-XR | 172.31.1.19

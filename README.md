@@ -199,6 +199,13 @@ sshinto scp -h 172.31.0.11 -U sherpa -k ~/.ssh/id_ed25519 \
   --source config.txt --dest /tmp/config.txt
 ```
 
+If `--dest` is omitted, provide `-d` to auto-derive the remote path from the device's base path (e.g. `flash:`, `/tmp/`, `/mnt/flash/`) plus the source filename:
+
+```bash
+sshinto scp -h 172.31.0.11 -U sherpa -k ~/.ssh/id_ed25519 -d cisco_ios --source config.txt
+# uploads to flash:config.txt
+```
+
 The default transfer timeout is 30 seconds; override with `-t`:
 
 ```bash
@@ -227,10 +234,43 @@ host = "172.31.0.11"
 
 Uploads inherit with the same priority as other fields: host entry > group > defaults. A job with only uploads and no commands is also valid.
 
+### Checking connectivity
+
+Verify SSH connectivity and prompt detection without running any commands:
+
+```bash
+sshinto check -h 172.31.0.11 -U sherpa -P 'secret' -d cisco_ios
+```
+
+With a jump host:
+
+```bash
+sshinto check -h 172.31.0.11 -U sherpa -k ~/.ssh/id_ed25519 -d cisco_ios \
+  -J admin@bastion --jumphost-key-file ~/.ssh/id_ed25519
+```
+
+### Saving output to files
+
+Use `-o` to save command output to disk. Output is written to `{output_dir}/{host}/{timestamp}/output.txt`:
+
+```bash
+sshinto run -h 172.31.0.11 -U sherpa -d cisco_ios -c 'show version' -o output
+```
+
+For jobs, `-o` saves per-host output:
+
+```bash
+sshinto job ./upgrade.toml -o output
+```
+
 ## Supported device types
 
 - `cisco_ios`
-- `cisco_ios_xr`
+- `cisco_iosxr`
 - `cisco_nxos`
 - `juniper_junos`
 - `arista_eos`
+- `nokia_srlinux`
+- `mikrotik_ros`
+- `aruba_aos`
+- `linux` (FRRouting, SONiC, or any standard Linux/BSD host)
