@@ -564,7 +564,12 @@ async fn drain_initial(reader: &mut russh::ChannelReadHalf, wait: Duration) -> S
                 Some(ChannelMsg::ExtendedData { data, .. }) => {
                     buffer.push_str(&String::from_utf8_lossy(&data));
                 }
-                _ => break,
+                // EOF or channel close — nothing more will arrive.
+                Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
+                // WindowAdjust, ExitStatus, and other control messages arrive
+                // before or alongside banner data on Linux hosts. Ignore them
+                // instead of breaking so we don't exit before the shell prompt.
+                _ => {}
             }
         }
     })

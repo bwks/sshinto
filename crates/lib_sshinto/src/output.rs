@@ -6,8 +6,12 @@ pub fn strip_command_output(raw: &str, command: &str, prompt_re: &Regex) -> Stri
     let mut text = raw;
 
     // Strip echo: if the first line matches the command, discard it.
+    // Some shells (bash with readline) prepend ANSI control sequences and a
+    // carriage return before the command echo, so strip those before comparing.
     if let Some(idx) = text.find('\n') {
-        let first_line = text[..idx].trim_end_matches('\r').trim();
+        let first_line_raw = text[..idx].trim_end_matches('\r');
+        let first_line_clean = crate::session::strip_ansi(first_line_raw);
+        let first_line = first_line_clean.trim_start_matches('\r').trim();
         if first_line == command.trim() {
             text = &text[idx + 1..];
         }
@@ -112,5 +116,14 @@ mod tests {
         let raw = "show version\nCisco IOS v15.1\nrouter#\n";
         let result = strip_command_output(raw, "show version", &cisco_prompt_re());
         assert_eq!(result, "Cisco IOS v15.1\n");
+    }
+
+    #[test]
+    fn ansi_prefixed_echo_is_stripped() {
+        // bash readline on Cumulus/SONiC prepends \x1b[?2004l\r before the echo
+        let linux_prompt = Regex::new(r"[\w\-\.@]+:[\w~\/\-\.]+[\$#]\s*$").unwrap();
+        let raw = "\x1b[?2004l\runame -a\r\nLinux dev21 6.1.0\r\nsherpa@dev21:mgmt:~$\r\n";
+        let result = strip_command_output(raw, "uname -a", &linux_prompt);
+        assert_eq!(result, "Linux dev21 6.1.0\r\n");
     }
 }
