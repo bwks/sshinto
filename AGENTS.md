@@ -70,22 +70,3 @@ mode entry, prompt format variants, and pager commands.
    changes how a device is handled, update the affected spec file in the
    same PR.
 
-## Testing
-You can SSH to the below devices with the username `sherpa` and the password `Everest1953!`.
-You can also use the username `sherpa` and ssh key `sherpa_ssh_key`
-Use these devices to test the implementation.
-
-### Active Lab Devices
-
-| Device | Model | IP | sshinto type |
-|--------|-------|----|--------------|
-| dev00 | devbox_linux | 172.31.1.11 | `linux` |
-| dev01 | arista_veos | 172.31.1.12 | `arista_eos` |
-| dev03 | aruba_aoscx | 172.31.1.13 | `aruba_aos` |
-| dev06 | cisco_cat8000v | 172.31.1.14 | `cisco_ios` |
-| dev13 | juniper_vrouter | 172.31.1.15 | `juniper_junos` |
-| dev17 | nokia_srlinux | 172.31.1.16 | `nokia_srlinux` |
-| dev19 | mikrotik_chr | 172.31.1.17 | `mikrotik_ros` |
-| dev20 | frr_linux | 172.31.1.18 | `linux` |
-| dev21 | cumulus_linux | 172.31.1.19 | `cumulus_linux` |
-| dev22 | sonic_linux | 172.31.1.20 | `sonic_linux` |
