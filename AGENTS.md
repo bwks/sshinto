@@ -29,6 +29,7 @@ is modified.
 
 ```
 test-specs/
+  lab-devices.md     # Current lab host for each device type — edit this, not the spec files
   common.md          # Cases that every device type must satisfy
   cisco_ios.md       # Device-specific cases for cisco_ios
   cisco_iosxr.md
@@ -59,9 +60,9 @@ mode entry, prompt format variants, and pager commands.
    minimum bar. A device type is not considered complete until all six pass
    against a real device.
 
-3. **Run specs against lab devices before merging.** Use the test devices
-   listed below. If the target device model is not currently active in the
-   lab, document this in the spec file and test as soon as a device becomes
+3. **Run specs against lab devices before merging.** Consult
+   `test-specs/lab-devices.md` for the current host assigned to each type.
+   If none is listed, document this and test as soon as a device becomes
    available.
 
 4. **Update the spec when behaviour changes.** If a bug fix or new feature

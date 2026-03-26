@@ -2,8 +2,7 @@
 
 Covers SONiC Linux devices (open-source network OS from Microsoft).
 
-**Lab host:** 172.31.1.20 (dev22, SONiC master.0-bb0612a10)
-**Auth:** `sherpa` / key `sherpa_ssh_key`
+**Lab host:** see `test-specs/lab-devices.md`
 
 All cases in `common.md` must pass in addition to the cases below.
 

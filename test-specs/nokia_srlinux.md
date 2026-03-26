@@ -2,8 +2,7 @@
 
 Covers Nokia SR Linux devices.
 
-**Lab host:** 172.31.1.16 (dev17, nokia_srlinux — container)
-**Auth:** `sherpa` / key `sherpa_ssh_key`
+**Lab host:** see `test-specs/lab-devices.md`
 
 All cases in `common.md` must pass in addition to the cases below.
 

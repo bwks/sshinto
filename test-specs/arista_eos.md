@@ -2,8 +2,7 @@
 
 Covers Arista EOS devices (physical and virtual — vEOS, cEOS).
 
-**Lab host:** 172.31.1.12 (dev01, arista_veos)
-**Auth:** `sherpa` / key `sherpa_ssh_key`
+**Lab host:** see `test-specs/lab-devices.md`
 
 All cases in `common.md` must pass in addition to the cases below.
 

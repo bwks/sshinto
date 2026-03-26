@@ -2,8 +2,7 @@
 
 Covers MikroTik RouterOS devices (CHR and physical).
 
-**Lab host:** 172.31.1.17 (dev19, mikrotik_chr)
-**Auth:** `sherpa` / key `sherpa_ssh_key`
+**Lab host:** see `test-specs/lab-devices.md`
 
 All cases in `common.md` must pass in addition to the cases below.
 

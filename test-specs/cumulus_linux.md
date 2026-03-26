@@ -2,8 +2,7 @@
 
 Covers Cumulus Linux devices (5.x with NVUE).
 
-**Lab host:** 172.31.1.19 (dev21, cumulus_linux 5.9.1)
-**Auth:** `sherpa` / key `sherpa_ssh_key`
+**Lab host:** see `test-specs/lab-devices.md`
 
 All cases in `common.md` must pass in addition to the cases below.
 

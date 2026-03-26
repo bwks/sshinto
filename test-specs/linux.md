@@ -3,8 +3,7 @@
 Covers generic Linux and BSD hosts — including FRRouting appliances,
 devboxes, and any standard Linux system not covered by a more specific type.
 
-**Lab host:** 172.31.1.18 (dev20, frr_linux — container)
-**Auth:** `sherpa` / key `sherpa_ssh_key`
+**Lab host:** see `test-specs/lab-devices.md`
 
 All cases in `common.md` must pass in addition to the cases below.
 

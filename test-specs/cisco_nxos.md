@@ -2,8 +2,7 @@
 
 Covers Cisco NX-OS devices (Nexus switches, virtual Nexus).
 
-**Lab host:** none currently active in lab
-**Auth:** `sherpa` / key `sherpa_ssh_key`
+**Lab host:** see `test-specs/lab-devices.md`
 
 All cases in `common.md` must pass in addition to the cases below.
 

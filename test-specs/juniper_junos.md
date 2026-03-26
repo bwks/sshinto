@@ -2,8 +2,7 @@
 
 Covers Juniper JunOS devices (vSRX, vMX, vQFX, virtual router, etc.).
 
-**Lab host:** 172.31.1.15 (dev13, juniper_vrouter)
-**Auth:** `sherpa` / key `sherpa_ssh_key`
+**Lab host:** see `test-specs/lab-devices.md`
 
 All cases in `common.md` must pass in addition to the cases below.
 

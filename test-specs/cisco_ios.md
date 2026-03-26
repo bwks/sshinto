@@ -2,8 +2,7 @@
 
 Covers Cisco IOS and Cisco IOS-XE devices.
 
-**Lab host:** 172.31.1.14 (dev06, cisco_cat8000v — IOS-XE 17.x)
-**Auth:** `sherpa` / key `sherpa_ssh_key`
+**Lab host:** see `test-specs/lab-devices.md`
 **Flags:** `--legacy-crypto` is NOT required for cat8000v; may be needed for older IOS devices.
 
 All cases in `common.md` must pass in addition to the cases below.

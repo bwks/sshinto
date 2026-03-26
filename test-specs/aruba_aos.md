@@ -2,8 +2,7 @@
 
 Covers Aruba AOS-CX devices.
 
-**Lab host:** 172.31.1.13 (dev03, aruba_aoscx)
-**Auth:** `sherpa` / key `sherpa_ssh_key`
+**Lab host:** see `test-specs/lab-devices.md`
 
 All cases in `common.md` must pass in addition to the cases below.
 
