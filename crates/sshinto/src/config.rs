@@ -129,6 +129,12 @@ pub struct ResolvedScpArgs {
 // ── Loading ─────────────────────────────────────────────────────────
 
 impl Config {
+    /// Load configuration from the first file found in this order:
+    ///
+    /// 1. `./sshinto.toml` (project-local config)
+    /// 2. `~/.sshinto/sshinto.toml` (user-global config)
+    ///
+    /// Returns `Config::default()` if neither file exists.
     pub fn load() -> Result<Config, ConfigError> {
         // 1. ./sshinto.toml
         let local = PathBuf::from("sshinto.toml");
@@ -150,6 +156,7 @@ impl Config {
     }
 }
 
+/// Return the current user's home directory from the `HOME` environment variable.
 fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }

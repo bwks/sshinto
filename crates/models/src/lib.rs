@@ -15,6 +15,8 @@ pub enum DeviceKind {
     MikrotikRos,
     ArubaAos,
     Linux,
+    CumulusLinux,
+    SonicLinux,
 }
 
 #[derive(Debug, Clone)]
@@ -175,7 +177,38 @@ const LINUX: DeviceProfile = DeviceProfile {
     base_path: "/tmp/",
 };
 
+const CUMULUS_LINUX: DeviceProfile = DeviceProfile {
+    kind: DeviceKind::CumulusLinux,
+    name: "Cumulus Linux",
+    // "user@switch:~$" or "user@switch:mgmt:~$" (with VRF in prompt)
+    // The VRF segment ":mgmt" is optional; the pattern matches via the last
+    // ":path$" segment regardless of how many colon-separated parts precede it.
+    prompt_pattern: r"[\w\-\.@]+:[\w~\/\-\.]+[\$#]\s*$",
+    privileged_prompt_pattern: r"[\w\-\.@]+:[\w~\/\-\.]+#\s*$",
+    config_prompt_pattern: r"[\w\-\.@]+:[\w~\/\-\.]+#\s*$",
+    paging_disable: "",
+    line_separator: "\n",
+    exit_config_command: "",
+    enable_command: "",
+    base_path: "/tmp/",
+};
+
+const SONIC_LINUX: DeviceProfile = DeviceProfile {
+    kind: DeviceKind::SonicLinux,
+    name: "SONiC Linux",
+    // "user@switch:~$" or "user@switch:~#"
+    prompt_pattern: r"[\w\-\.@]+:[\w~\/\-\.]+[\$#]\s*$",
+    privileged_prompt_pattern: r"[\w\-\.@]+:[\w~\/\-\.]+#\s*$",
+    config_prompt_pattern: r"[\w\-\.@]+:[\w~\/\-\.]+#\s*$",
+    paging_disable: "",
+    line_separator: "\n",
+    exit_config_command: "",
+    enable_command: "",
+    base_path: "/tmp/",
+};
+
 impl DeviceKind {
+    /// Return the static [`DeviceProfile`] associated with this device kind.
     pub fn profile(&self) -> &'static DeviceProfile {
         match self {
             DeviceKind::CiscoIos => &CISCO_IOS,
@@ -187,11 +220,16 @@ impl DeviceKind {
             DeviceKind::MikrotikRos => &MIKROTIK_ROS,
             DeviceKind::ArubaAos => &ARUBA_AOS,
             DeviceKind::Linux => &LINUX,
+            DeviceKind::CumulusLinux => &CUMULUS_LINUX,
+            DeviceKind::SonicLinux => &SONIC_LINUX,
         }
     }
 }
 
 impl DeviceProfile {
+    /// Compile `prompt_pattern` into a [`Regex`].
+    ///
+    /// Panics if the built-in pattern is not valid regex (indicates a programming error).
     pub fn prompt_regex(&self) -> Regex {
         Regex::new(self.prompt_pattern).expect("built-in prompt pattern must be valid regex")
     }
@@ -201,7 +239,7 @@ impl DeviceProfile {
 mod tests {
     use super::*;
 
-    const ALL_KINDS: [DeviceKind; 9] = [
+    const ALL_KINDS: [DeviceKind; 11] = [
         DeviceKind::CiscoIos,
         DeviceKind::CiscoIosxr,
         DeviceKind::CiscoNxos,
@@ -211,6 +249,8 @@ mod tests {
         DeviceKind::MikrotikRos,
         DeviceKind::ArubaAos,
         DeviceKind::Linux,
+        DeviceKind::CumulusLinux,
+        DeviceKind::SonicLinux,
     ];
 
     #[test]
@@ -237,6 +277,8 @@ mod tests {
             ),
             (DeviceKind::ArubaAos, "Aruba AOS-CX", "no page"),
             (DeviceKind::Linux, "Linux", ""),
+            (DeviceKind::CumulusLinux, "Cumulus Linux", ""),
+            (DeviceKind::SonicLinux, "SONiC Linux", ""),
         ];
         for (kind, expected_name, expected_paging) in cases {
             let p = kind.profile();
@@ -337,6 +379,30 @@ mod tests {
         assert!(re.is_match("dev06:~$"));
         assert!(re.is_match("root@host:/tmp#"));
         assert!(re.is_match("user@server:/var/log$"));
+        assert!(!re.is_match(""));
+        assert!(!re.is_match("not a prompt"));
+    }
+
+    #[test]
+    fn cumulus_linux_prompt_matches() {
+        let p = DeviceKind::CumulusLinux.profile();
+        let re = p.prompt_regex();
+        // Standard prompt without VRF
+        assert!(re.is_match("sherpa@dev21:~$"));
+        // Prompt with management VRF (":mgmt" segment inserted by Cumulus PS1)
+        assert!(re.is_match("sherpa@dev21:mgmt:~$"));
+        assert!(re.is_match("root@leaf01:mgmt:~#"));
+        assert!(!re.is_match(""));
+        assert!(!re.is_match("not a prompt"));
+    }
+
+    #[test]
+    fn sonic_linux_prompt_matches() {
+        let p = DeviceKind::SonicLinux.profile();
+        let re = p.prompt_regex();
+        assert!(re.is_match("sherpa@dev22:~$"));
+        assert!(re.is_match("admin@sonic-switch:~$"));
+        assert!(re.is_match("root@sonic:/tmp#"));
         assert!(!re.is_match(""));
         assert!(!re.is_match("not a prompt"));
     }

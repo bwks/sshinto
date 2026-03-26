@@ -93,6 +93,10 @@ pub struct JobHostEntry {
 // ── Loading ─────────────────────────────────────────────────────────
 
 impl JobFile {
+    /// Parse a TOML job file at `path` and validate its contents.
+    ///
+    /// Returns an error if the file cannot be read, fails to parse, has no hosts,
+    /// references an unknown group, or has hosts with neither commands nor uploads.
     pub fn load(path: &str) -> Result<JobFile, ConfigError> {
         let text = std::fs::read_to_string(path).map_err(ConfigError::Io)?;
         let job: JobFile = toml::from_str(&text).map_err(ConfigError::Parse)?;
@@ -136,6 +140,10 @@ impl JobFile {
 
 // ── Resolution ──────────────────────────────────────────────────────
 
+/// Merge per-host → group → job-defaults → config-defaults into a single [`ResolvedArgs`].
+///
+/// The `pick!` macro implements the four-level priority chain. `password_override`
+/// is a password entered interactively once for all hosts that lack an explicit credential.
 fn resolve_host(
     entry: &JobHostEntry,
     group: Option<&JobGroup>,
@@ -367,6 +375,10 @@ fn resolve_upload_dest(source: &str, dest: Option<&str>, device_type: DeviceKind
 
 // ── Per-host execution ──────────────────────────────────────────────
 
+/// Spawn a single-host task and return `(name, host, result)` regardless of success or failure.
+///
+/// Errors are captured rather than propagated so that a failure on one host does
+/// not abort the remaining hosts in the job.
 async fn run_single_host(
     name: String,
     args: ResolvedArgs,
@@ -379,6 +391,9 @@ async fn run_single_host(
     }
 }
 
+/// Convert a [`JumpHostResolved`] into a [`JumpHost`] for use in [`ConnectConfig`].
+///
+/// Returns an error if neither a key file nor a password is configured.
 fn build_jump_host(jh: JumpHostResolved) -> Result<JumpHost, Box<dyn std::error::Error + Send + Sync>> {
     let credential = if let Some(ref key_path) = jh.key_file {
         Credential::PrivateKeyFile {
@@ -400,6 +415,8 @@ fn build_jump_host(jh: JumpHostResolved) -> Result<JumpHost, Box<dyn std::error:
     })
 }
 
+/// Connect to a single host, run SCP uploads if any, disable paging, execute all
+/// commands, write output to `output_dir` if set, and return the concatenated output.
 async fn run_single_host_inner(
     name: &str,
     args: ResolvedArgs,
@@ -490,6 +507,9 @@ async fn run_single_host_inner(
 
 // ── Orchestrator ────────────────────────────────────────────────────
 
+/// Load and execute a job file: resolve all hosts, optionally prompt for a shared
+/// password, run each host concurrently (with optional `--workers` concurrency cap),
+/// and print per-host output followed by a summary.
 pub async fn run_job(job_args: &JobArgs) -> Result<(), Box<dyn std::error::Error>> {
     let job = JobFile::load(&job_args.file)?;
     let config = Config::load().unwrap_or_default();

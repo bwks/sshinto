@@ -265,12 +265,14 @@ sshinto job ./upgrade.toml -o output
 
 ## Supported device types
 
-- `cisco_ios`
-- `cisco_iosxr`
-- `cisco_nxos`
-- `juniper_junos`
-- `arista_eos`
-- `nokia_srlinux`
-- `mikrotik_ros`
-- `aruba_aos`
-- `linux` (FRRouting, SONiC, or any standard Linux/BSD host)
+- `cisco_ios` — Cisco IOS and IOS-XE
+- `cisco_iosxr` — Cisco IOS-XR
+- `cisco_nxos` — Cisco NX-OS
+- `juniper_junos` — Juniper JunOS
+- `arista_eos` — Arista EOS
+- `nokia_srlinux` — Nokia SR Linux
+- `mikrotik_ros` — MikroTik RouterOS
+- `aruba_aos` — Aruba AOS-CX
+- `cumulus_linux` — Cumulus Linux (supports VRF-qualified prompts such as `user@switch:mgmt:~$`)
+- `sonic_linux` — SONiC Linux
+- `linux` — FRRouting or any other standard Linux/BSD host
