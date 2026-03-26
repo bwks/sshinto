@@ -91,6 +91,8 @@ async fn main() {
     }
 }
 
+/// Convert a [`config::JumpHostResolved`] into a [`JumpHost`] ready for use in
+/// [`ConnectConfig`]. Prompts for a password interactively if no credential is set.
 fn build_jump_host(
     jh: config::JumpHostResolved,
 ) -> Result<JumpHost, Box<dyn std::error::Error>> {
@@ -116,6 +118,9 @@ fn build_jump_host(
     })
 }
 
+/// Connect to a device, disable paging, run all commands, and print the output.
+///
+/// Optionally saves output to a file under `args.output_dir` when set.
 async fn run(args: ResolvedArgs) -> Result<(), Box<dyn std::error::Error>> {
     let credential = if let Some(ref key_path) = args.key_file {
         Credential::PrivateKeyFile {
@@ -204,6 +209,9 @@ async fn run(args: ResolvedArgs) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Connect to a device and verify that the prompt is detected correctly.
+///
+/// Prints the detected prompt line and exits without running any commands.
 async fn run_check(args: ResolvedCheckArgs) -> Result<(), Box<dyn std::error::Error>> {
     let credential = if let Some(ref key_path) = args.key_file {
         Credential::PrivateKeyFile {
@@ -270,6 +278,10 @@ async fn run_check(args: ResolvedCheckArgs) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
+/// Connect to a device and upload a single file via SCP.
+///
+/// The remote destination is derived from `args.dest`; if omitted, the device's
+/// `base_path` is combined with the source filename via [`resolve_dest`].
 async fn run_scp(args: ResolvedScpArgs) -> Result<(), Box<dyn std::error::Error>> {
     let credential = if let Some(ref key_path) = args.key_file {
         Credential::PrivateKeyFile {

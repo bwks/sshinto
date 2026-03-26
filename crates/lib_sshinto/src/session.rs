@@ -79,6 +79,9 @@ pub struct Session {
     writer: russh::ChannelWriteHalf<Msg>,
 }
 
+/// Build a russh client config, optionally enabling legacy key-exchange algorithms
+/// (`diffie-hellman-group14-sha1`, `diffie-hellman-group-exchange-sha1`) for
+/// older devices that do not support modern KEX.
 fn build_ssh_config(legacy_crypto: bool) -> Arc<client::Config> {
     if legacy_crypto {
         let mut kex = russh::Preferred::default().kex.into_owned();
@@ -96,6 +99,10 @@ fn build_ssh_config(legacy_crypto: bool) -> Arc<client::Config> {
     }
 }
 
+/// Authenticate an already-connected SSH handle using the given credential.
+///
+/// Supports password and private-key (PEM string or file path) authentication.
+/// Returns [`SshintoError::AuthFailed`] if the server rejects the credential.
 async fn authenticate(
     handle: &mut client::Handle<SshHandler>,
     username: &str,
@@ -256,6 +263,10 @@ impl Connection {
         })
     }
 
+    /// Upload a local file to `remote_path` on the device using the SCP sink protocol.
+    ///
+    /// Opens a new exec channel for each call so this can be used before or after
+    /// a shell channel is open (some devices only allow one channel at a time).
     pub async fn upload_file(
         &self,
         local_path: &Path,
@@ -327,6 +338,7 @@ impl Connection {
         Ok(())
     }
 
+    /// Gracefully disconnect the SSH session, including the jump-host connection if one exists.
     pub async fn close(self) -> Result<()> {
         self.handle
             .disconnect(Disconnect::ByApplication, "closing session", "en")
@@ -353,11 +365,15 @@ impl Session {
         conn.open_shell().await
     }
 
+    /// Write raw bytes into the shell channel (e.g. a command followed by `\n`).
     pub async fn write(&self, data: &[u8]) -> Result<()> {
         self.writer.data(&data[..]).await?;
         Ok(())
     }
 
+    /// Accumulate channel output until the buffer ends with the exact `prompt` string.
+    ///
+    /// Returns the full accumulated output including the prompt line.
     pub async fn read_until_prompt(
         &mut self,
         prompt: &str,
@@ -391,6 +407,9 @@ impl Session {
         .map_err(|_| SshintoError::Timeout)?
     }
 
+    /// Send `command\n` and wait until the output ends with the exact `prompt` string.
+    ///
+    /// Returns the raw accumulated output (echo + response + prompt).
     pub async fn send_command(
         &mut self,
         command: &str,
@@ -402,6 +421,10 @@ impl Session {
         self.read_until_prompt(prompt, timeout_dur).await
     }
 
+    /// Accumulate channel output until the trimmed buffer matches `prompt_re`.
+    ///
+    /// ANSI escape sequences are stripped before the regex is tested so that
+    /// prompt colouring on Linux/Cumulus hosts does not prevent detection.
     pub async fn read_until_prompt_re(
         &mut self,
         prompt_re: &Regex,
@@ -437,6 +460,9 @@ impl Session {
         .map_err(|_| SshintoError::Timeout)?
     }
 
+    /// Send `command\n` and wait until the output matches `prompt_re`.
+    ///
+    /// Returns the raw accumulated output (echo + response + prompt).
     pub async fn send_command_re(
         &mut self,
         command: &str,
@@ -448,6 +474,10 @@ impl Session {
         self.read_until_prompt_re(prompt_re, timeout_dur).await
     }
 
+    /// Send `command\n`, wait for the prompt, and return the cleaned output.
+    ///
+    /// Strips the echoed command from the first line and the trailing prompt from the
+    /// last line via [`crate::output::strip_command_output`].
     pub async fn send_command_clean(
         &mut self,
         command: &str,
@@ -483,6 +513,7 @@ impl Session {
         buffer
     }
 
+    /// Upload a local file via SCP. Delegates to [`Connection::upload_file`].
     pub async fn upload_file(
         &self,
         local_path: &Path,
@@ -494,12 +525,17 @@ impl Session {
             .await
     }
 
+    /// Close the shell channel and the underlying SSH connection.
     pub async fn close(self) -> Result<()> {
         let _ = self.writer.close().await;
         self.conn.close().await
     }
 }
 
+/// Read and validate a single SCP acknowledgement byte from the remote `scp -t` process.
+///
+/// SCP protocol: `0x00` = OK, `0x01` = warning, `0x02` = fatal error.
+/// The byte is followed by an optional message terminated by `\n`.
 async fn read_scp_ack(reader: &mut russh::ChannelReadHalf, timeout_dur: Duration) -> Result<()> {
     timeout(timeout_dur, async {
         loop {
@@ -533,6 +569,9 @@ async fn read_scp_ack(reader: &mut russh::ChannelReadHalf, timeout_dur: Duration
     .map_err(|_| SshintoError::Timeout)?
 }
 
+/// Expand a leading `~/` in `path` to the value of the `HOME` environment variable.
+///
+/// Returns the path unchanged if it does not start with `~/` or if `HOME` is unset.
 fn expand_tilde(path: &str) -> String {
     if let Some(rest) = path.strip_prefix("~/") {
         if let Some(home) = std::env::var_os("HOME") {
@@ -542,6 +581,11 @@ fn expand_tilde(path: &str) -> String {
     path.to_string()
 }
 
+/// Choose the signature hash algorithm for RSA keys.
+///
+/// Modern devices require `rsa-sha2-256`; legacy devices (e.g. older Cisco IOS) only
+/// accept the original `ssh-rsa` (SHA-1) scheme. Non-RSA key types return `None` to
+/// let russh negotiate automatically.
 fn hash_alg_for_key(key: &russh::keys::PrivateKey, legacy_crypto: bool) -> Option<HashAlg> {
     if key.algorithm().is_rsa() && !legacy_crypto {
         // Modern devices expect rsa-sha2-256.
@@ -553,6 +597,13 @@ fn hash_alg_for_key(key: &russh::keys::PrivateKey, legacy_crypto: bool) -> Optio
     }
 }
 
+/// Drain the initial SSH channel output (banner, MOTD, shell prompt) for up to `wait`.
+///
+/// Control messages such as `WindowAdjust` are silently ignored rather than
+/// treated as a termination signal; only `Eof`, `Close`, or channel closure
+/// stops the drain early.  The accumulated text is returned but is typically
+/// discarded by callers — its main purpose is to clear the read buffer so
+/// subsequent reads start on a clean prompt.
 async fn drain_initial(reader: &mut russh::ChannelReadHalf, wait: Duration) -> String {
     let mut buffer = String::new();
     let _ = timeout(wait, async {

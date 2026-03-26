@@ -208,6 +208,7 @@ const SONIC_LINUX: DeviceProfile = DeviceProfile {
 };
 
 impl DeviceKind {
+    /// Return the static [`DeviceProfile`] associated with this device kind.
     pub fn profile(&self) -> &'static DeviceProfile {
         match self {
             DeviceKind::CiscoIos => &CISCO_IOS,
@@ -226,6 +227,9 @@ impl DeviceKind {
 }
 
 impl DeviceProfile {
+    /// Compile `prompt_pattern` into a [`Regex`].
+    ///
+    /// Panics if the built-in pattern is not valid regex (indicates a programming error).
     pub fn prompt_regex(&self) -> Regex {
         Regex::new(self.prompt_pattern).expect("built-in prompt pattern must be valid regex")
     }
