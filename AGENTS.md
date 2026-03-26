@@ -16,6 +16,7 @@ multiple network vendors and linux/bsd hosts.
 
 ## Guidelines
 - Never use `.unwrap()` except in tests.
+- Prefer the `gh` CLI for all git and GitHub actions (commits, pushes, pull requests, etc.) over raw `git` commands.
 
 ## Test Specifications (`test-specs/`)
 
