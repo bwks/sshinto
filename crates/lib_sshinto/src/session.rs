@@ -7,7 +7,7 @@ use regex::Regex;
 use russh::client::{self, Msg};
 use russh::keys::ssh_key::HashAlg;
 use russh::keys::{PrivateKeyWithHashAlg, decode_secret_key};
-use russh::{ChannelMsg, Disconnect};
+use russh::{ChannelMsg, Disconnect, client::KeyboardInteractiveAuthResponse};
 use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::OpenFlags;
 use tokio::io::AsyncWriteExt;
@@ -104,7 +104,8 @@ fn build_ssh_config(legacy_crypto: bool) -> Arc<client::Config> {
 
 /// Authenticate an already-connected SSH handle using the given credential.
 ///
-/// Supports password and private-key (PEM string or file path) authentication.
+/// Supports password (with keyboard-interactive fallback) and private-key
+/// (PEM string or file path) authentication.
 /// Returns [`SshintoError::AuthFailed`] if the server rejects the credential.
 async fn authenticate(
     handle: &mut client::Handle<SshHandler>,
@@ -114,13 +115,47 @@ async fn authenticate(
     timeout_dur: Duration,
 ) -> Result<()> {
     let auth_result = match credential {
-        Credential::Password(password) => timeout(
-            timeout_dur,
-            handle.authenticate_password(username, password),
-        )
-        .await
-        .map_err(|_| SshintoError::Timeout)?
-        .map_err(SshintoError::Ssh)?,
+        Credential::Password(password) => {
+            // Try keyboard-interactive first: this is the method used by most
+            // modern SSH servers and required by some devices (e.g. Cisco FTD)
+            // that do not accept the bare SSH `password` method. Trying
+            // keyboard-interactive first avoids wasting an auth attempt on
+            // devices with a low MaxAuthTries limit.
+            let mut ki = timeout(
+                timeout_dur,
+                handle.authenticate_keyboard_interactive_start(username, None),
+            )
+            .await
+            .map_err(|_| SshintoError::Timeout)?
+            .map_err(SshintoError::Ssh)?;
+
+            loop {
+                match ki {
+                    KeyboardInteractiveAuthResponse::Success => return Ok(()),
+                    KeyboardInteractiveAuthResponse::Failure { .. } => break,
+                    KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
+                        let responses = vec![password.clone(); prompts.len()];
+                        ki = timeout(
+                            timeout_dur,
+                            handle.authenticate_keyboard_interactive_respond(responses),
+                        )
+                        .await
+                        .map_err(|_| SshintoError::Timeout)?
+                        .map_err(SshintoError::Ssh)?;
+                    }
+                }
+            }
+
+            // keyboard-interactive was rejected without any InfoRequest
+            // (server doesn't support it). Fall back to the SSH password method.
+            timeout(
+                timeout_dur,
+                handle.authenticate_password(username, password),
+            )
+            .await
+            .map_err(|_| SshintoError::Timeout)?
+            .map_err(SshintoError::Ssh)?
+        }
         Credential::PrivateKey {
             key_pem,
             passphrase,

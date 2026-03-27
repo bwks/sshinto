@@ -12,7 +12,7 @@ details anywhere else in the test specs.
 | `cisco_iosxr` | dev08 (cisco_iosxrv9000) | 172.31.1.16 |
 | `cisco_nxos` | dev09 (cisco_nexus9300v) | 172.31.1.17 |
 | `cisco_asa` | dev04 (cisco_asav) | 172.31.1.14 |
-| `cisco_ftd` | dev12 (cisco_ftdv) | 172.31.1.18 |
+| `cisco_ftd` | dev12 (cisco_ftdv) | 172.31.1.18 — **username: `admin`**, password auth (keyboard-interactive), key auth not supported |
 | `juniper_junos` | dev13 (juniper_vrouter) | 172.31.1.19 |
 | `arista_eos` | dev01 (arista_veos) | 172.31.1.12 |
 | `nokia_srlinux` | dev17 (nokia_srlinux) | 172.31.1.20 |
