@@ -185,6 +185,10 @@ sshinto job ./upgrade.toml -J admin@bastion --jumphost-key-file ~/.ssh/id_ed2551
 
 ### Uploading files via SCP
 
+File uploads use SFTP when the remote host supports it (e.g. Linux hosts),
+and fall back to the legacy SCP sink protocol for devices that only expose
+SCP (e.g. Cisco IOS-XR).
+
 Upload a local file to a remote device:
 
 ```bash
