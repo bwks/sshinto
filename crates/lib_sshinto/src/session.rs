@@ -329,11 +329,10 @@ impl Connection {
         timeout_dur: Duration,
         try_sftp: bool,
     ) -> Result<()> {
-        if try_sftp {
-            match self.upload_file_sftp(local_path, remote_path, timeout_dur).await {
-                Ok(()) => return Ok(()),
-                Err(_) => {}
-            }
+        if try_sftp
+            && let Ok(()) = self.upload_file_sftp(local_path, remote_path, timeout_dur).await
+        {
+            return Ok(());
         }
         self.upload_file_scp(local_path, remote_path, timeout_dur).await
     }
@@ -449,7 +448,7 @@ impl Connection {
         // Send file header: C0644 <size> <filename>\n
         let header = format!("C0644 {size} {filename}\n");
         writer
-            .data(&header.as_bytes()[..])
+            .data(header.as_bytes())
             .await
             .map_err(SshintoError::Ssh)?;
 
@@ -503,7 +502,7 @@ impl Session {
 
     /// Write raw bytes into the shell channel (e.g. a command followed by `\n`).
     pub async fn write(&self, data: &[u8]) -> Result<()> {
-        self.writer.data(&data[..]).await?;
+        self.writer.data(data).await?;
         Ok(())
     }
 
@@ -708,10 +707,10 @@ async fn read_scp_ack(reader: &mut russh::ChannelReadHalf, timeout_dur: Duration
 ///
 /// Returns the path unchanged if it does not start with `~/` or if `HOME` is unset.
 fn expand_tilde(path: &str) -> String {
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = std::env::var_os("HOME") {
-            return Path::new(&home).join(rest).to_string_lossy().into_owned();
-        }
+    if let Some(rest) = path.strip_prefix("~/")
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return Path::new(&home).join(rest).to_string_lossy().into_owned();
     }
     path.to_string()
 }
@@ -788,12 +787,12 @@ pub fn strip_ansi(s: &str) -> String {
     let mut chars = s.chars();
     while let Some(c) = chars.next() {
         if c == '\x1b' {
-            if let Some(next) = chars.next() {
-                if next == '[' {
-                    for c2 in chars.by_ref() {
-                        if c2.is_ascii_alphabetic() || c2 == '~' {
-                            break;
-                        }
+            if let Some(next) = chars.next()
+                && next == '['
+            {
+                for c2 in chars.by_ref() {
+                    if c2.is_ascii_alphabetic() || c2 == '~' {
+                        break;
                     }
                 }
             }
