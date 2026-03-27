@@ -321,7 +321,7 @@ async fn run_scp(args: ResolvedScpArgs) -> Result<(), Box<dyn std::error::Error>
     let timeout_dur = Duration::from_secs(args.timeout);
     let sftp_supported = args
         .device_type
-        .map_or(true, |dt| dt.profile().sftp_supported);
+        .is_none_or(|dt| dt.profile().sftp_supported);
     let dest = resolve_dest(&args.source, args.dest.as_deref(), args.device_type);
 
     eprintln!("Connecting to {}:{}...", args.host, args.port);

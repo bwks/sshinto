@@ -107,10 +107,10 @@ impl JobFile {
 
         // Validate that every host group reference points to an existing group.
         for entry in &job.hosts {
-            if let Some(ref group_name) = entry.group {
-                if !job.groups.iter().any(|g| g.name == *group_name) {
-                    return Err(ConfigError::InvalidGroup(group_name.clone()));
-                }
+            if let Some(ref group_name) = entry.group
+                && !job.groups.iter().any(|g| g.name == *group_name)
+            {
+                return Err(ConfigError::InvalidGroup(group_name.clone()));
             }
         }
 
@@ -123,9 +123,9 @@ impl JobFile {
                     .group
                     .as_ref()
                     .and_then(|gn| job.groups.iter().find(|g| g.name == *gn));
-                let has_cmds = group.map_or(false, |g| !g.commands.is_empty());
+                let has_cmds = group.is_some_and(|g| !g.commands.is_empty());
                 let has_uploads = !h.uploads.is_empty()
-                    || group.map_or(false, |g| !g.uploads.is_empty())
+                    || group.is_some_and(|g| !g.uploads.is_empty())
                     || has_default_uploads;
                 !has_cmds && !has_uploads
             });
