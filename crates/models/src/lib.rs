@@ -193,7 +193,7 @@ const ARUBA_AOS: DeviceProfile = DeviceProfile {
     line_separator: "\n",
     exit_config_command: "end",
     enable_command: "enable",
-    base_path: "/tmp/",
+    base_path: "/",
 };
 
 const PALO_ALTO_PANOS: DeviceProfile = DeviceProfile {

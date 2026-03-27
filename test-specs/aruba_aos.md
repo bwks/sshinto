@@ -15,7 +15,7 @@ All cases in `common.md` must pass in addition to the cases below.
 | Show version (TC-COMMON-002) | `show version` |
 | Multi-command pair (TC-COMMON-003) | `show version` + `show interface all` |
 | Long output — paging test (TC-COMMON-005) | `show running-config` |
-| File presence check after SCP (TC-COMMON-004) | `dir /tmp/` (from bash shell context) |
+| File presence check after SCP (TC-COMMON-004) | `sftp sherpa@<host>` then `ls /` — AOS-CX exposes no CLI command to list the SFTP root |
 | Invalid command (TC-COMMON-006) | `sshinto_invalid_command_xyz` |
 
 ---
