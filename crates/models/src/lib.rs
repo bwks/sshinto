@@ -34,6 +34,11 @@ pub struct DeviceProfile {
     pub exit_config_command: &'static str,
     pub enable_command: &'static str,
     pub base_path: &'static str,
+    /// Whether to attempt SFTP before falling back to the legacy SCP sink protocol.
+    ///
+    /// Set to `false` for devices where SFTP is unsupported and attempting it
+    /// would corrupt the SSH connection state (e.g. Cisco IOS, ASA, FTD).
+    pub sftp_supported: bool,
 }
 
 const CISCO_IOS: DeviceProfile = DeviceProfile {
@@ -50,6 +55,9 @@ const CISCO_IOS: DeviceProfile = DeviceProfile {
     exit_config_command: "end",
     enable_command: "enable",
     base_path: "flash:",
+    // IOS does not support SFTP; attempting it causes the SSH daemon to discard
+    // subsequent channel requests, breaking the SCP fallback.
+    sftp_supported: false,
 };
 
 const CISCO_IOS_XR: DeviceProfile = DeviceProfile {
@@ -66,6 +74,7 @@ const CISCO_IOS_XR: DeviceProfile = DeviceProfile {
     exit_config_command: "end",
     enable_command: "",
     base_path: "/disk0:/",
+    sftp_supported: true,
 };
 
 const CISCO_NXOS: DeviceProfile = DeviceProfile {
@@ -82,6 +91,7 @@ const CISCO_NXOS: DeviceProfile = DeviceProfile {
     exit_config_command: "end",
     enable_command: "",
     base_path: "bootflash:",
+    sftp_supported: true,
 };
 
 const CISCO_ASA: DeviceProfile = DeviceProfile {
@@ -98,6 +108,9 @@ const CISCO_ASA: DeviceProfile = DeviceProfile {
     exit_config_command: "end",
     enable_command: "enable",
     base_path: "disk0:",
+    // ASA does not support SFTP; like IOS, the SSH daemon rejects the subsystem
+    // in a way that corrupts the connection for the SCP fallback.
+    sftp_supported: false,
 };
 
 const CISCO_FTD: DeviceProfile = DeviceProfile {
@@ -114,6 +127,7 @@ const CISCO_FTD: DeviceProfile = DeviceProfile {
     exit_config_command: "",
     enable_command: "",
     base_path: "/ngfw/var/common/",
+    sftp_supported: false,
 };
 
 const JUNIPER_JUNOS: DeviceProfile = DeviceProfile {
@@ -130,6 +144,7 @@ const JUNIPER_JUNOS: DeviceProfile = DeviceProfile {
     exit_config_command: "exit configuration-mode",
     enable_command: "",
     base_path: "/var/tmp/",
+    sftp_supported: true,
 };
 
 const ARISTA_EOS: DeviceProfile = DeviceProfile {
@@ -146,6 +161,7 @@ const ARISTA_EOS: DeviceProfile = DeviceProfile {
     exit_config_command: "end",
     enable_command: "enable",
     base_path: "/mnt/flash/",
+    sftp_supported: true,
 };
 
 const NOKIA_SRLINUX: DeviceProfile = DeviceProfile {
@@ -162,6 +178,7 @@ const NOKIA_SRLINUX: DeviceProfile = DeviceProfile {
     exit_config_command: "quit",
     enable_command: "",
     base_path: "/tmp/",
+    sftp_supported: true,
 };
 
 const MIKROTIK_ROS: DeviceProfile = DeviceProfile {
@@ -178,6 +195,7 @@ const MIKROTIK_ROS: DeviceProfile = DeviceProfile {
     exit_config_command: "/",
     enable_command: "",
     base_path: "/",
+    sftp_supported: true,
 };
 
 const ARUBA_AOS: DeviceProfile = DeviceProfile {
@@ -194,6 +212,7 @@ const ARUBA_AOS: DeviceProfile = DeviceProfile {
     exit_config_command: "end",
     enable_command: "enable",
     base_path: "/",
+    sftp_supported: true,
 };
 
 const PALO_ALTO_PANOS: DeviceProfile = DeviceProfile {
@@ -212,6 +231,9 @@ const PALO_ALTO_PANOS: DeviceProfile = DeviceProfile {
     // PAN-OS SCP upload uses /scp/config/ path; requires an account with SCP
     // access (e.g. a dedicated scp_admin user or an account with scp privilege).
     base_path: "/scp/config/",
+    // PAN-OS does not support SFTP for the admin (CLISH) account; SCP upload
+    // requires a dedicated SCP-enabled user.
+    sftp_supported: false,
 };
 
 const LINUX: DeviceProfile = DeviceProfile {
@@ -228,6 +250,7 @@ const LINUX: DeviceProfile = DeviceProfile {
     exit_config_command: "",
     enable_command: "",
     base_path: "/tmp/",
+    sftp_supported: true,
 };
 
 const CUMULUS_LINUX: DeviceProfile = DeviceProfile {
@@ -244,6 +267,7 @@ const CUMULUS_LINUX: DeviceProfile = DeviceProfile {
     exit_config_command: "",
     enable_command: "",
     base_path: "/tmp/",
+    sftp_supported: true,
 };
 
 const SONIC_LINUX: DeviceProfile = DeviceProfile {
@@ -258,6 +282,7 @@ const SONIC_LINUX: DeviceProfile = DeviceProfile {
     exit_config_command: "",
     enable_command: "",
     base_path: "/tmp/",
+    sftp_supported: true,
 };
 
 impl DeviceKind {

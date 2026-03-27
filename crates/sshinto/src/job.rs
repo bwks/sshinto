@@ -456,7 +456,7 @@ async fn run_single_host_inner(
     for upload in &args.uploads {
         let source = std::path::Path::new(&upload.source);
         let dest = resolve_upload_dest(&upload.source, upload.dest.as_deref(), args.device_type);
-        match conn.upload_file(source, &dest, timeout_dur).await {
+        match conn.upload_file(source, &dest, timeout_dur, profile.sftp_supported).await {
             Ok(()) => eprintln!("[{name}] Uploaded {} -> {}", upload.source, dest),
             Err(e) => return Err(format!("upload {} -> {}: {e}", upload.source, dest).into()),
         }

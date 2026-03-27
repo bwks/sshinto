@@ -269,10 +269,10 @@ sshinto job ./upgrade.toml -o output
 
 ## Supported device types
 
-- `cisco_ios` — Cisco IOS and IOS-XE
+- `cisco_ios` — Cisco IOS and IOS-XE; file upload uses the legacy SCP sink protocol (SFTP is not supported)
 - `cisco_iosxr` — Cisco IOS-XR
 - `cisco_nxos` — Cisco NX-OS
-- `cisco_asa` — Cisco ASA OS
+- `cisco_asa` — Cisco ASA OS; file upload uses the legacy SCP sink protocol (SFTP is not supported)
 - `cisco_ftd` — Cisco Firepower Threat Defense (FTD CLISH); uses keyboard-interactive auth (FTD does not accept the plain SSH password method)
 - `juniper_junos` — Juniper JunOS
 - `arista_eos` — Arista EOS

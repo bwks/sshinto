@@ -327,10 +327,13 @@ impl Connection {
         local_path: &Path,
         remote_path: &str,
         timeout_dur: Duration,
+        try_sftp: bool,
     ) -> Result<()> {
-        match self.upload_file_sftp(local_path, remote_path, timeout_dur).await {
-            Ok(()) => return Ok(()),
-            Err(_) => {}
+        if try_sftp {
+            match self.upload_file_sftp(local_path, remote_path, timeout_dur).await {
+                Ok(()) => return Ok(()),
+                Err(_) => {}
+            }
         }
         self.upload_file_scp(local_path, remote_path, timeout_dur).await
     }
@@ -353,10 +356,24 @@ impl Connection {
             .map_err(|_| SshintoError::Timeout)?
             .map_err(SshintoError::Ssh)?;
 
-        timeout(timeout_dur, channel.request_subsystem(true, "sftp"))
+        // Use want_reply=true with a short probe window so we get a definitive
+        // answer before committing the channel to the SFTP stream. Devices that
+        // reject SFTP (SSH_MSG_CHANNEL_FAILURE) or simply ignore the request
+        // (e.g. Cisco IOS, which never replies) will be detected quickly.
+        // If the probe fails we close the channel explicitly — channel.split()
+        // + writer.close() sends SSH_MSG_CHANNEL_CLOSE so the remote end
+        // releases its state before we open the SCP fallback channel.
+        let probe_timeout = timeout_dur.min(Duration::from_secs(5));
+        let sftp_ok = timeout(probe_timeout, channel.request_subsystem(true, "sftp"))
             .await
-            .map_err(|_| SshintoError::Timeout)?
-            .map_err(SshintoError::Ssh)?;
+            .map(|r| r.is_ok())
+            .unwrap_or(false);
+
+        if !sftp_ok {
+            let (_, writer) = channel.split();
+            let _ = writer.close().await;
+            return Err(SshintoError::ScpError("SFTP not supported".into()));
+        }
 
         let sftp = timeout(timeout_dur, SftpSession::new(channel.into_stream()))
             .await
@@ -636,9 +653,10 @@ impl Session {
         local_path: &Path,
         remote_path: &str,
         timeout_dur: Duration,
+        try_sftp: bool,
     ) -> Result<()> {
         self.conn
-            .upload_file(local_path, remote_path, timeout_dur)
+            .upload_file(local_path, remote_path, timeout_dur, try_sftp)
             .await
     }
 
