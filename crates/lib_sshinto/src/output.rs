@@ -4,17 +4,51 @@ use regex::Regex;
 /// from raw SSH output, returning only the command's actual response.
 pub fn strip_command_output(raw: &str, command: &str, prompt_re: &Regex) -> String {
     let mut text = raw;
+    let cmd = command.trim();
 
-    // Strip echo: if the first line matches the command, discard it.
-    // Some shells (bash with readline) prepend ANSI control sequences and a
-    // carriage return before the command echo, so strip those before comparing.
-    if let Some(idx) = text.find('\n') {
-        let first_line_raw = text[..idx].trim_end_matches('\r');
-        let first_line_clean = crate::session::strip_ansi(first_line_raw);
-        let first_line = first_line_clean.trim_start_matches('\r').trim();
-        if first_line == command.trim() {
-            text = &text[idx + 1..];
+    // Strip echo: find the last line that looks like the echoed command and
+    // discard everything up to and including it.
+    //
+    // Three echo styles are handled:
+    // 1. Normal echo  — first line equals the command exactly.
+    // 2. Wide-terminal echo (MikroTik at 200 cols) — one long line that both
+    //    starts and ends with the command text.
+    // 3. Redraw echo (PAN-OS CLISH) — multiple lines; each is an intermediate
+    //    redraw of the command as it is processed character-by-character.
+    //    The last redraw line ends with the full command, possibly preceded by
+    //    the prompt (e.g. "admin@fw> show system info").
+    //
+    // We scan from the beginning and track the byte offset immediately after
+    // the last line that looks like an echo line.  If we find one, we skip
+    // everything up to that point.
+    let mut last_echo_end: Option<usize> = None;
+    let mut scan = text;
+    let mut byte_offset: usize = 0;
+
+    while let Some(nl) = scan.find('\n') {
+        let raw_line = &scan[..nl];
+        let clean = crate::session::strip_ansi(raw_line.trim_end_matches('\r'));
+        // Take the visible portion after the last \r (handles in-line overwrite
+        // redraws that collapse multiple writes into one visible line).
+        let visible = clean.rsplit('\r').next().unwrap_or(&clean).trim();
+
+        let is_echo = visible == cmd
+            // Wide-terminal: line starts AND ends with the command (with padding
+            // between, e.g. MikroTik).
+            || (visible.starts_with(cmd) && visible.ends_with(cmd) && visible.len() > cmd.len())
+            // Redraw echo: prompt text precedes the command on the line.
+            || visible.ends_with(cmd);
+
+        if is_echo {
+            last_echo_end = Some(byte_offset + nl + 1);
         }
+
+        byte_offset += nl + 1;
+        scan = &scan[nl + 1..];
+    }
+
+    if let Some(end) = last_echo_end {
+        text = &text[end..];
     }
 
     // Strip trailing prompt: trim whitespace from the end, then check if
@@ -50,6 +84,10 @@ mod tests {
 
     fn iosxr_prompt_re() -> Regex {
         Regex::new(r"^RP/\d+/\w+/\w+:[\w\-\.]+#$").unwrap()
+    }
+
+    fn panos_prompt_re() -> Regex {
+        Regex::new(r"[\w\-\.@]+[#>]\s*$").unwrap()
     }
 
     #[test]
@@ -125,5 +163,15 @@ mod tests {
         let raw = "\x1b[?2004l\runame -a\r\nLinux dev21 6.1.0\r\nsherpa@dev21:mgmt:~$\r\n";
         let result = strip_command_output(raw, "uname -a", &linux_prompt);
         assert_eq!(result, "Linux dev21 6.1.0\r\n");
+    }
+
+    #[test]
+    fn panos_redraw_echo_is_stripped() {
+        // PAN-OS CLISH sends character-by-character redraw lines, each ending
+        // with an increasing prefix of the command (and the last ending with
+        // the full command, possibly preceded by the prompt).
+        let raw = "show \r\nsherpa@dev18> show system \r\nsherpa@dev18> show system info\r\nhostname: dev18\r\nsherpa@dev18>\r\n";
+        let result = strip_command_output(raw, "show system info", &panos_prompt_re());
+        assert_eq!(result, "hostname: dev18\r\n");
     }
 }

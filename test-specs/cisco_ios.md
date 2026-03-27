@@ -7,6 +7,11 @@ Covers Cisco IOS and Cisco IOS-XE devices.
 
 All cases in `common.md` must pass in addition to the cases below.
 
+**Note on TC-COMMON-006:** IOS treats any single bare word at the privileged EXEC prompt as a
+hostname and performs a DNS lookup if `no ip domain-lookup` is not configured. Use
+`show sshinto-invalid-xyz` instead of a bare invalid token — `show` is a recognised keyword so
+IOS returns `% Invalid input detected at '^' marker.` immediately without a DNS lookup.
+
 ---
 
 ## Reference commands
@@ -17,7 +22,7 @@ All cases in `common.md` must pass in addition to the cases below.
 | Multi-command pair (TC-COMMON-003) | `show version` + `show ip interface brief` |
 | Long output — paging test (TC-COMMON-005) | `show running-config` |
 | File presence check after SCP (TC-COMMON-004) | `dir flash:` |
-| Invalid command (TC-COMMON-006) | `sshinto_invalid_command_xyz` |
+| Invalid command (TC-COMMON-006) | `show sshinto-invalid-xyz` |
 
 ---
 

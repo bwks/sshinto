@@ -66,6 +66,12 @@ mode entry, prompt format variants, and pager commands.
    If none is listed, document this and test as soon as a device becomes
    available.
 
+   Before running tests, copy `sherpa_ssh_config` to `~/.ssh/config` and
+   remove any `ProxyJump` lines from it (they are only needed when accessing
+   the lab from outside the local network). The `sshinto` binary does not
+   read SSH config directly, but the file must be clean for any underlying
+   SSH operations to resolve correctly.
+
 4. **Update the spec when behaviour changes.** If a bug fix or new feature
    changes how a device is handled, update the affected spec file in the
    same PR.

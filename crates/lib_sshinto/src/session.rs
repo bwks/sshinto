@@ -7,7 +7,10 @@ use regex::Regex;
 use russh::client::{self, Msg};
 use russh::keys::ssh_key::HashAlg;
 use russh::keys::{PrivateKeyWithHashAlg, decode_secret_key};
-use russh::{ChannelMsg, Disconnect};
+use russh::{ChannelMsg, Disconnect, client::KeyboardInteractiveAuthResponse};
+use russh_sftp::client::SftpSession;
+use russh_sftp::protocol::OpenFlags;
+use tokio::io::AsyncWriteExt;
 use tokio::time::timeout;
 
 use crate::error::{Result, SshintoError};
@@ -36,8 +39,12 @@ pub struct ConnectConfig {
 impl Default for ConnectConfig {
     fn default() -> Self {
         Self {
-            timeout: Duration::from_secs(10),
-            term: "xterm".into(),
+            timeout: Duration::from_secs(30),
+            // "dumb" prevents interactive terminal applications (e.g. PAN-OS CLISH)
+            // from enabling character-by-character echo with line-editing control
+            // sequences (\r\x1b[K redraws). Those sequences cause false prompt
+            // matches in read_until_prompt_re and contaminate command output.
+            term: "dumb".into(),
             cols: 200,
             rows: 48,
             legacy_crypto: false,
@@ -101,7 +108,8 @@ fn build_ssh_config(legacy_crypto: bool) -> Arc<client::Config> {
 
 /// Authenticate an already-connected SSH handle using the given credential.
 ///
-/// Supports password and private-key (PEM string or file path) authentication.
+/// Supports password (with keyboard-interactive fallback) and private-key
+/// (PEM string or file path) authentication.
 /// Returns [`SshintoError::AuthFailed`] if the server rejects the credential.
 async fn authenticate(
     handle: &mut client::Handle<SshHandler>,
@@ -111,13 +119,58 @@ async fn authenticate(
     timeout_dur: Duration,
 ) -> Result<()> {
     let auth_result = match credential {
-        Credential::Password(password) => timeout(
-            timeout_dur,
-            handle.authenticate_password(username, password),
-        )
-        .await
-        .map_err(|_| SshintoError::Timeout)?
-        .map_err(SshintoError::Ssh)?,
+        Credential::Password(password) => {
+            // Try keyboard-interactive first: this is the method used by most
+            // modern SSH servers and required by some devices (e.g. Cisco FTD)
+            // that do not accept the bare SSH `password` method. Trying
+            // keyboard-interactive first avoids wasting an auth attempt on
+            // devices with a low MaxAuthTries limit.
+            let mut ki = timeout(
+                timeout_dur,
+                handle.authenticate_keyboard_interactive_start(username, None),
+            )
+            .await
+            .map_err(|_| SshintoError::Timeout)?
+            .map_err(SshintoError::Ssh)?;
+
+            loop {
+                match ki {
+                    KeyboardInteractiveAuthResponse::Success => return Ok(()),
+                    KeyboardInteractiveAuthResponse::Failure { .. } => break,
+                    KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
+                        let responses = vec![password.clone(); prompts.len()];
+                        // Yield to the tokio runtime so that russh's internal
+                        // client-handler task can finish processing the
+                        // InfoRequest packet before we send the response.
+                        // A single yield_now() is not enough on fast schedulers;
+                        // several yields are more reliable without adding latency
+                        // that could exceed the device's response deadline
+                        // (Cisco FTD has a tight window for keyboard-interactive).
+                        for _ in 0..10 {
+                            tokio::task::yield_now().await;
+                        }
+
+                        ki = timeout(
+                            timeout_dur,
+                            handle.authenticate_keyboard_interactive_respond(responses),
+                        )
+                        .await
+                        .map_err(|_| SshintoError::Timeout)?
+                        .map_err(SshintoError::Ssh)?;
+                    }
+                }
+            }
+
+            // keyboard-interactive was rejected without any InfoRequest
+            // (server doesn't support it). Fall back to the SSH password method.
+            timeout(
+                timeout_dur,
+                handle.authenticate_password(username, password),
+            )
+            .await
+            .map_err(|_| SshintoError::Timeout)?
+            .map_err(SshintoError::Ssh)?
+        }
         Credential::PrivateKey {
             key_pem,
             passphrase,
@@ -263,11 +316,94 @@ impl Connection {
         })
     }
 
-    /// Upload a local file to `remote_path` on the device using the SCP sink protocol.
+    /// Upload a local file to `remote_path` on the device.
+    ///
+    /// Tries SFTP first (supported by most modern SSH servers including Linux
+    /// hosts that may not have the `scp` binary installed). Falls back to the
+    /// legacy SCP sink protocol for devices that expose SCP but not SFTP
+    /// (e.g. some Cisco IOS-XR configurations).
+    pub async fn upload_file(
+        &self,
+        local_path: &Path,
+        remote_path: &str,
+        timeout_dur: Duration,
+        try_sftp: bool,
+    ) -> Result<()> {
+        if try_sftp {
+            match self.upload_file_sftp(local_path, remote_path, timeout_dur).await {
+                Ok(()) => return Ok(()),
+                Err(_) => {}
+            }
+        }
+        self.upload_file_scp(local_path, remote_path, timeout_dur).await
+    }
+
+    /// Upload using the SFTP subsystem.
+    async fn upload_file_sftp(
+        &self,
+        local_path: &Path,
+        remote_path: &str,
+        timeout_dur: Duration,
+    ) -> Result<()> {
+        let expanded = expand_tilde(&local_path.to_string_lossy());
+        let local = Path::new(&expanded);
+        let contents = tokio::fs::read(local)
+            .await
+            .map_err(|e| SshintoError::ScpError(format!("cannot read {}: {e}", local.display())))?;
+
+        let channel = timeout(timeout_dur, self.handle.channel_open_session())
+            .await
+            .map_err(|_| SshintoError::Timeout)?
+            .map_err(SshintoError::Ssh)?;
+
+        // Use want_reply=true with a short probe window so we get a definitive
+        // answer before committing the channel to the SFTP stream. Devices that
+        // reject SFTP (SSH_MSG_CHANNEL_FAILURE) or simply ignore the request
+        // (e.g. Cisco IOS, which never replies) will be detected quickly.
+        // If the probe fails we close the channel explicitly — channel.split()
+        // + writer.close() sends SSH_MSG_CHANNEL_CLOSE so the remote end
+        // releases its state before we open the SCP fallback channel.
+        let probe_timeout = timeout_dur.min(Duration::from_secs(5));
+        let sftp_ok = timeout(probe_timeout, channel.request_subsystem(true, "sftp"))
+            .await
+            .map(|r| r.is_ok())
+            .unwrap_or(false);
+
+        if !sftp_ok {
+            let (_, writer) = channel.split();
+            let _ = writer.close().await;
+            return Err(SshintoError::ScpError("SFTP not supported".into()));
+        }
+
+        let sftp = timeout(timeout_dur, SftpSession::new(channel.into_stream()))
+            .await
+            .map_err(|_| SshintoError::ScpError("SFTP session init timed out".into()))?
+            .map_err(|e| SshintoError::ScpError(e.to_string()))?;
+
+        let mut file = sftp
+            .open_with_flags(
+                remote_path,
+                OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
+            )
+            .await
+            .map_err(|e| SshintoError::ScpError(e.to_string()))?;
+
+        file.write_all(&contents)
+            .await
+            .map_err(|e| SshintoError::ScpError(e.to_string()))?;
+
+        file.shutdown()
+            .await
+            .map_err(|e| SshintoError::ScpError(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// Upload using the legacy SCP sink protocol (`scp -t`).
     ///
     /// Opens a new exec channel for each call so this can be used before or after
     /// a shell channel is open (some devices only allow one channel at a time).
-    pub async fn upload_file(
+    async fn upload_file_scp(
         &self,
         local_path: &Path,
         remote_path: &str,
@@ -437,15 +573,13 @@ impl Session {
                 match self.reader.wait().await {
                     Some(ChannelMsg::Data { data }) => {
                         buffer.push_str(&String::from_utf8_lossy(&data));
-                        let clean = strip_ansi(&buffer);
-                        if prompt_re.is_match(clean.trim_end()) {
+                        if prompt_visible(&buffer, prompt_re) {
                             return Ok(buffer);
                         }
                     }
                     Some(ChannelMsg::ExtendedData { data, .. }) => {
                         buffer.push_str(&String::from_utf8_lossy(&data));
-                        let clean = strip_ansi(&buffer);
-                        if prompt_re.is_match(clean.trim_end()) {
+                        if prompt_visible(&buffer, prompt_re) {
                             return Ok(buffer);
                         }
                     }
@@ -519,9 +653,10 @@ impl Session {
         local_path: &Path,
         remote_path: &str,
         timeout_dur: Duration,
+        try_sftp: bool,
     ) -> Result<()> {
         self.conn
-            .upload_file(local_path, remote_path, timeout_dur)
+            .upload_file(local_path, remote_path, timeout_dur, try_sftp)
             .await
     }
 
@@ -626,6 +761,25 @@ async fn drain_initial(reader: &mut russh::ChannelReadHalf, wait: Duration) -> S
     })
     .await;
     buffer
+}
+
+/// Check whether a stable prompt is visible at the end of `buf`.
+///
+/// Strips ANSI escape sequences, then examines the *visible* last line.
+/// A carriage return (`\r`) without a following newline means the device is
+/// overwriting the current line (e.g. PAN-OS character-by-character echo).
+/// Only the text after the final `\r` on the last `\n`-terminated segment is
+/// matched against the regex, so intermediate echo redraws do not trigger a
+/// false-positive match.
+fn prompt_visible(buf: &str, prompt_re: &Regex) -> bool {
+    let clean = strip_ansi(buf);
+    // Last \n-delimited segment (may be empty if buf ends with \n).
+    let last_segment = clean.split('\n').next_back().unwrap_or("");
+    // Within that segment, take only what follows the last \r — this is the
+    // text that is visually on screen after all overwrite redraws.
+    let visible = last_segment.split('\r').next_back().unwrap_or("");
+    let visible = visible.trim_end();
+    !visible.is_empty() && prompt_re.is_match(visible)
 }
 
 /// Strip ANSI escape sequences (CSI sequences) so prompt regexes can match cleanly.

@@ -9,11 +9,14 @@ pub enum DeviceKind {
     CiscoIos,
     CiscoIosxr,
     CiscoNxos,
+    CiscoAsa,
+    CiscoFtd,
     JuniperJunos,
     AristaEos,
     NokiaSrlinux,
     MikrotikRos,
     ArubaAos,
+    PaloAltoPanos,
     Linux,
     CumulusLinux,
     SonicLinux,
@@ -31,13 +34,18 @@ pub struct DeviceProfile {
     pub exit_config_command: &'static str,
     pub enable_command: &'static str,
     pub base_path: &'static str,
+    /// Whether to attempt SFTP before falling back to the legacy SCP sink protocol.
+    ///
+    /// Set to `false` for devices where SFTP is unsupported and attempting it
+    /// would corrupt the SSH connection state (e.g. Cisco IOS, ASA, FTD).
+    pub sftp_supported: bool,
 }
 
 const CISCO_IOS: DeviceProfile = DeviceProfile {
     kind: DeviceKind::CiscoIos,
     name: "Cisco IOS",
-    // "router01#" or "router01>"
-    prompt_pattern: r"[\w\-\.]+[#>]\s*$",
+    // "router01#", "router01>", "router01(config)#", "router01(config-if)#"
+    prompt_pattern: r"[\w\-\.]+(\([\w\-]+\))?[#>]\s*$",
     // "router01#"
     privileged_prompt_pattern: r"[\w\-\.]+#\s*$",
     // "router01(config)#" or "router01(config-if)#"
@@ -47,13 +55,16 @@ const CISCO_IOS: DeviceProfile = DeviceProfile {
     exit_config_command: "end",
     enable_command: "enable",
     base_path: "flash:",
+    // IOS does not support SFTP; attempting it causes the SSH daemon to discard
+    // subsequent channel requests, breaking the SCP fallback.
+    sftp_supported: false,
 };
 
 const CISCO_IOS_XR: DeviceProfile = DeviceProfile {
     kind: DeviceKind::CiscoIosxr,
     name: "Cisco IOS-XR",
-    // "RP/0/RSP0/CPU0:router01#" or "RP/0/RSP0/CPU0:router01>"
-    prompt_pattern: r"RP/\d+/[\w/]+:[\w\-\.]+[#>]\s*$",
+    // "RP/0/RSP0/CPU0:router01#", "RP/0/RSP0/CPU0:router01>", "RP/0/RSP0/CPU0:router01(config)#"
+    prompt_pattern: r"RP/\d+/[\w/]+:[\w\-\.]+(\([\w\-]+\))?[#>]\s*$",
     // "RP/0/RSP0/CPU0:router01#"
     privileged_prompt_pattern: r"RP/\d+/[\w/]+:[\w\-\.]+#\s*$",
     // "RP/0/RSP0/CPU0:router01(config)#"
@@ -62,14 +73,15 @@ const CISCO_IOS_XR: DeviceProfile = DeviceProfile {
     line_separator: "\n",
     exit_config_command: "end",
     enable_command: "",
-    base_path: "disk0:",
+    base_path: "/disk0:/",
+    sftp_supported: true,
 };
 
 const CISCO_NXOS: DeviceProfile = DeviceProfile {
     kind: DeviceKind::CiscoNxos,
     name: "Cisco NX-OS",
-    // "nxos-sw01#" or "nxos-sw01>"
-    prompt_pattern: r"[\w\-\.]+[#>]\s*$",
+    // "nxos-sw01#", "nxos-sw01>", "nxos-sw01(config)#", "nxos-sw01(config-if)#"
+    prompt_pattern: r"[\w\-\.]+(\([\w\-]+\))?[#>]\s*$",
     // "nxos-sw01#"
     privileged_prompt_pattern: r"[\w\-\.]+#\s*$",
     // "nxos-sw01(config)#" or "nxos-sw01(config-if)#"
@@ -79,6 +91,43 @@ const CISCO_NXOS: DeviceProfile = DeviceProfile {
     exit_config_command: "end",
     enable_command: "",
     base_path: "bootflash:",
+    sftp_supported: true,
+};
+
+const CISCO_ASA: DeviceProfile = DeviceProfile {
+    kind: DeviceKind::CiscoAsa,
+    name: "Cisco ASA",
+    // "ciscoasa>", "ciscoasa#", "fw01>", "ciscoasa(config)#"
+    prompt_pattern: r"[\w\-\.]+(\([\w\-]+\))?[#>]\s*$",
+    // "ciscoasa#"
+    privileged_prompt_pattern: r"[\w\-\.]+#\s*$",
+    // "ciscoasa(config)#" or "ciscoasa(config-if)#"
+    config_prompt_pattern: r"[\w\-\.]+\([\w\-]+\)#\s*$",
+    paging_disable: "terminal pager 0",
+    line_separator: "\n",
+    exit_config_command: "end",
+    enable_command: "enable",
+    base_path: "disk0:",
+    // ASA does not support SFTP; like IOS, the SSH daemon rejects the subsystem
+    // in a way that corrupts the connection for the SCP fallback.
+    sftp_supported: false,
+};
+
+const CISCO_FTD: DeviceProfile = DeviceProfile {
+    kind: DeviceKind::CiscoFtd,
+    name: "Cisco FTD",
+    // "firepower> " — FTD CLISH prompt; hostname part is optional in some versions
+    prompt_pattern: r"[\w\-\.]*>\s*$",
+    // No separate privileged mode in FTD CLISH
+    privileged_prompt_pattern: r"[\w\-\.]*>\s*$",
+    // No separate config mode in FTD CLISH
+    config_prompt_pattern: r"[\w\-\.]*>\s*$",
+    paging_disable: "",
+    line_separator: "\n",
+    exit_config_command: "",
+    enable_command: "",
+    base_path: "/ngfw/var/common/",
+    sftp_supported: false,
 };
 
 const JUNIPER_JUNOS: DeviceProfile = DeviceProfile {
@@ -95,13 +144,14 @@ const JUNIPER_JUNOS: DeviceProfile = DeviceProfile {
     exit_config_command: "exit configuration-mode",
     enable_command: "",
     base_path: "/var/tmp/",
+    sftp_supported: true,
 };
 
 const ARISTA_EOS: DeviceProfile = DeviceProfile {
     kind: DeviceKind::AristaEos,
     name: "Arista EOS",
-    // "eos-sw01#" or "eos-sw01>"
-    prompt_pattern: r"[\w\-\.]+[#>]\s*$",
+    // "eos-sw01#", "eos-sw01>", "eos-sw01(config)#", "eos-sw01(config-if)#"
+    prompt_pattern: r"[\w\-\.]+(\([\w\-]+\))?[#>]\s*$",
     // "eos-sw01#"
     privileged_prompt_pattern: r"[\w\-\.]+#\s*$",
     // "eos-sw01(config)#" or "eos-sw01(config-if)#"
@@ -111,6 +161,7 @@ const ARISTA_EOS: DeviceProfile = DeviceProfile {
     exit_config_command: "end",
     enable_command: "enable",
     base_path: "/mnt/flash/",
+    sftp_supported: true,
 };
 
 const NOKIA_SRLINUX: DeviceProfile = DeviceProfile {
@@ -127,6 +178,7 @@ const NOKIA_SRLINUX: DeviceProfile = DeviceProfile {
     exit_config_command: "quit",
     enable_command: "",
     base_path: "/tmp/",
+    sftp_supported: true,
 };
 
 const MIKROTIK_ROS: DeviceProfile = DeviceProfile {
@@ -143,13 +195,14 @@ const MIKROTIK_ROS: DeviceProfile = DeviceProfile {
     exit_config_command: "/",
     enable_command: "",
     base_path: "/",
+    sftp_supported: true,
 };
 
 const ARUBA_AOS: DeviceProfile = DeviceProfile {
     kind: DeviceKind::ArubaAos,
     name: "Aruba AOS-CX",
-    // "dev07#" or "dev07>"
-    prompt_pattern: r"[\w\-\.]+[#>]\s*$",
+    // "dev07#", "dev07>", "dev07(config)#", "dev07(config-if)#"
+    prompt_pattern: r"[\w\-\.]+(\([\w\-]+\))?[#>]\s*$",
     // "dev07#"
     privileged_prompt_pattern: r"[\w\-\.]+#\s*$",
     // "dev07(config)#"
@@ -158,7 +211,29 @@ const ARUBA_AOS: DeviceProfile = DeviceProfile {
     line_separator: "\n",
     exit_config_command: "end",
     enable_command: "enable",
-    base_path: "/tmp/",
+    base_path: "/",
+    sftp_supported: true,
+};
+
+const PALO_ALTO_PANOS: DeviceProfile = DeviceProfile {
+    kind: DeviceKind::PaloAltoPanos,
+    name: "Palo Alto PAN-OS",
+    // "admin@PA-VM>" (operational) or "admin@PA-VM#" (configure)
+    prompt_pattern: r"[\w\-\.@]+[#>]\s*$",
+    // Operational mode — already privileged, no enable needed
+    privileged_prompt_pattern: r"[\w\-\.@]+>\s*$",
+    // "admin@PA-VM#" — configure mode
+    config_prompt_pattern: r"[\w\-\.@]+#\s*$",
+    paging_disable: "set cli pager off",
+    line_separator: "\n",
+    exit_config_command: "exit",
+    enable_command: "",
+    // PAN-OS SCP upload uses /scp/config/ path; requires an account with SCP
+    // access (e.g. a dedicated scp_admin user or an account with scp privilege).
+    base_path: "/scp/config/",
+    // PAN-OS does not support SFTP for the admin (CLISH) account; SCP upload
+    // requires a dedicated SCP-enabled user.
+    sftp_supported: false,
 };
 
 const LINUX: DeviceProfile = DeviceProfile {
@@ -175,6 +250,7 @@ const LINUX: DeviceProfile = DeviceProfile {
     exit_config_command: "",
     enable_command: "",
     base_path: "/tmp/",
+    sftp_supported: true,
 };
 
 const CUMULUS_LINUX: DeviceProfile = DeviceProfile {
@@ -191,6 +267,7 @@ const CUMULUS_LINUX: DeviceProfile = DeviceProfile {
     exit_config_command: "",
     enable_command: "",
     base_path: "/tmp/",
+    sftp_supported: true,
 };
 
 const SONIC_LINUX: DeviceProfile = DeviceProfile {
@@ -205,6 +282,7 @@ const SONIC_LINUX: DeviceProfile = DeviceProfile {
     exit_config_command: "",
     enable_command: "",
     base_path: "/tmp/",
+    sftp_supported: true,
 };
 
 impl DeviceKind {
@@ -214,11 +292,14 @@ impl DeviceKind {
             DeviceKind::CiscoIos => &CISCO_IOS,
             DeviceKind::CiscoIosxr => &CISCO_IOS_XR,
             DeviceKind::CiscoNxos => &CISCO_NXOS,
+            DeviceKind::CiscoAsa => &CISCO_ASA,
+            DeviceKind::CiscoFtd => &CISCO_FTD,
             DeviceKind::JuniperJunos => &JUNIPER_JUNOS,
             DeviceKind::AristaEos => &ARISTA_EOS,
             DeviceKind::NokiaSrlinux => &NOKIA_SRLINUX,
             DeviceKind::MikrotikRos => &MIKROTIK_ROS,
             DeviceKind::ArubaAos => &ARUBA_AOS,
+            DeviceKind::PaloAltoPanos => &PALO_ALTO_PANOS,
             DeviceKind::Linux => &LINUX,
             DeviceKind::CumulusLinux => &CUMULUS_LINUX,
             DeviceKind::SonicLinux => &SONIC_LINUX,
@@ -239,15 +320,18 @@ impl DeviceProfile {
 mod tests {
     use super::*;
 
-    const ALL_KINDS: [DeviceKind; 11] = [
+    const ALL_KINDS: [DeviceKind; 14] = [
         DeviceKind::CiscoIos,
         DeviceKind::CiscoIosxr,
         DeviceKind::CiscoNxos,
+        DeviceKind::CiscoAsa,
+        DeviceKind::CiscoFtd,
         DeviceKind::JuniperJunos,
         DeviceKind::AristaEos,
         DeviceKind::NokiaSrlinux,
         DeviceKind::MikrotikRos,
         DeviceKind::ArubaAos,
+        DeviceKind::PaloAltoPanos,
         DeviceKind::Linux,
         DeviceKind::CumulusLinux,
         DeviceKind::SonicLinux,
@@ -259,6 +343,8 @@ mod tests {
             (DeviceKind::CiscoIos, "Cisco IOS", "terminal length 0"),
             (DeviceKind::CiscoIosxr, "Cisco IOS-XR", "terminal length 0"),
             (DeviceKind::CiscoNxos, "Cisco NX-OS", "terminal length 0"),
+            (DeviceKind::CiscoAsa, "Cisco ASA", "terminal pager 0"),
+            (DeviceKind::CiscoFtd, "Cisco FTD", ""),
             (
                 DeviceKind::JuniperJunos,
                 "Juniper JUNOS",
@@ -276,6 +362,7 @@ mod tests {
                 "",
             ),
             (DeviceKind::ArubaAos, "Aruba AOS-CX", "no page"),
+            (DeviceKind::PaloAltoPanos, "Palo Alto PAN-OS", "set cli pager off"),
             (DeviceKind::Linux, "Linux", ""),
             (DeviceKind::CumulusLinux, "Cumulus Linux", ""),
             (DeviceKind::SonicLinux, "SONiC Linux", ""),
@@ -304,6 +391,8 @@ mod tests {
         assert!(re.is_match("dev01#"));
         assert!(re.is_match("router.lab>"));
         assert!(re.is_match("sw-core01#"));
+        assert!(re.is_match("router01(config)#"));
+        assert!(re.is_match("sw-core01(config-if)#"));
         assert!(!re.is_match(""));
         assert!(!re.is_match("not a prompt"));
     }
@@ -314,6 +403,7 @@ mod tests {
         let re = p.prompt_regex();
         assert!(re.is_match("RP/0/RSP0/CPU0:router01#"));
         assert!(re.is_match("RP/0/RSP0/CPU0:router01>"));
+        assert!(re.is_match("RP/0/RSP0/CPU0:router01(config)#"));
         assert!(!re.is_match("dev01#"));
     }
 
@@ -334,6 +424,10 @@ mod tests {
         assert!(re.is_match("router01(config)#"));
         assert!(re.is_match("sw-01(config-if)#"));
         assert!(!re.is_match("router01#"));
+        // prompt_regex must also match config prompts so sessions don't hang
+        let prompt_re = p.prompt_regex();
+        assert!(prompt_re.is_match("router01(config)#"));
+        assert!(prompt_re.is_match("sw-01(config-if)#"));
     }
 
     #[test]
@@ -367,6 +461,8 @@ mod tests {
         assert!(re.is_match("dev07#"));
         assert!(re.is_match("switch01>"));
         assert!(re.is_match("core-sw.lab#"));
+        assert!(re.is_match("dev07(config)#"));
+        assert!(re.is_match("dev07(config-if)#"));
         assert!(!re.is_match(""));
         assert!(!re.is_match("not a prompt"));
     }
@@ -403,6 +499,49 @@ mod tests {
         assert!(re.is_match("sherpa@dev22:~$"));
         assert!(re.is_match("admin@sonic-switch:~$"));
         assert!(re.is_match("root@sonic:/tmp#"));
+        assert!(!re.is_match(""));
+        assert!(!re.is_match("not a prompt"));
+    }
+
+    #[test]
+    fn cisco_asa_prompt_matches() {
+        let p = DeviceKind::CiscoAsa.profile();
+        let re = p.prompt_regex();
+        assert!(re.is_match("ciscoasa>"));
+        assert!(re.is_match("ciscoasa#"));
+        assert!(re.is_match("fw01>"));
+        assert!(re.is_match("fw-edge.lab#"));
+        assert!(!re.is_match(""));
+        assert!(!re.is_match("not a prompt"));
+    }
+
+    #[test]
+    fn cisco_asa_config_prompt_matches() {
+        let p = DeviceKind::CiscoAsa.profile();
+        let re = Regex::new(p.config_prompt_pattern).unwrap();
+        assert!(re.is_match("ciscoasa(config)#"));
+        assert!(re.is_match("ciscoasa(config-if)#"));
+        assert!(!re.is_match("ciscoasa#"));
+    }
+
+    #[test]
+    fn cisco_ftd_prompt_matches() {
+        let p = DeviceKind::CiscoFtd.profile();
+        let re = p.prompt_regex();
+        assert!(re.is_match("firepower>"));
+        assert!(re.is_match(">"));
+        assert!(re.is_match("> "));
+        assert!(!re.is_match(""));
+        assert!(!re.is_match("not a prompt"));
+    }
+
+    #[test]
+    fn palo_alto_panos_prompt_matches() {
+        let p = DeviceKind::PaloAltoPanos.profile();
+        let re = p.prompt_regex();
+        assert!(re.is_match("admin@PA-VM>"));
+        assert!(re.is_match("admin@fw-lab>"));
+        assert!(re.is_match("admin@PA-VM#"));
         assert!(!re.is_match(""));
         assert!(!re.is_match("not a prompt"));
     }

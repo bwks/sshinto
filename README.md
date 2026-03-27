@@ -185,6 +185,10 @@ sshinto job ./upgrade.toml -J admin@bastion --jumphost-key-file ~/.ssh/id_ed2551
 
 ### Uploading files via SCP
 
+File uploads use SFTP when the remote host supports it (e.g. Linux hosts),
+and fall back to the legacy SCP sink protocol for devices that only expose
+SCP (e.g. Cisco IOS-XR).
+
 Upload a local file to a remote device:
 
 ```bash
@@ -265,14 +269,17 @@ sshinto job ./upgrade.toml -o output
 
 ## Supported device types
 
-- `cisco_ios` — Cisco IOS and IOS-XE
+- `cisco_ios` — Cisco IOS and IOS-XE; file upload uses the legacy SCP sink protocol (SFTP is not supported)
 - `cisco_iosxr` — Cisco IOS-XR
 - `cisco_nxos` — Cisco NX-OS
+- `cisco_asa` — Cisco ASA OS; file upload uses the legacy SCP sink protocol (SFTP is not supported)
+- `cisco_ftd` — Cisco Firepower Threat Defense (FTD CLISH); uses keyboard-interactive auth (FTD does not accept the plain SSH password method)
 - `juniper_junos` — Juniper JunOS
 - `arista_eos` — Arista EOS
 - `nokia_srlinux` — Nokia SR Linux
 - `mikrotik_ros` — MikroTik RouterOS
 - `aruba_aos` — Aruba AOS-CX
+- `palo_alto_panos` — Palo Alto PAN-OS; file upload via `sshinto scp` requires a dedicated SCP user (not the admin CLISH account) and the path `/scp/config/<file>`
 - `cumulus_linux` — Cumulus Linux (supports VRF-qualified prompts such as `user@switch:mgmt:~$`)
 - `sonic_linux` — SONiC Linux
 - `linux` — FRRouting or any other standard Linux/BSD host
