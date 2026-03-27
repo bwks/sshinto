@@ -39,8 +39,8 @@ pub struct DeviceProfile {
 const CISCO_IOS: DeviceProfile = DeviceProfile {
     kind: DeviceKind::CiscoIos,
     name: "Cisco IOS",
-    // "router01#" or "router01>"
-    prompt_pattern: r"[\w\-\.]+[#>]\s*$",
+    // "router01#", "router01>", "router01(config)#", "router01(config-if)#"
+    prompt_pattern: r"[\w\-\.]+(\([\w\-]+\))?[#>]\s*$",
     // "router01#"
     privileged_prompt_pattern: r"[\w\-\.]+#\s*$",
     // "router01(config)#" or "router01(config-if)#"
@@ -55,8 +55,8 @@ const CISCO_IOS: DeviceProfile = DeviceProfile {
 const CISCO_IOS_XR: DeviceProfile = DeviceProfile {
     kind: DeviceKind::CiscoIosxr,
     name: "Cisco IOS-XR",
-    // "RP/0/RSP0/CPU0:router01#" or "RP/0/RSP0/CPU0:router01>"
-    prompt_pattern: r"RP/\d+/[\w/]+:[\w\-\.]+[#>]\s*$",
+    // "RP/0/RSP0/CPU0:router01#", "RP/0/RSP0/CPU0:router01>", "RP/0/RSP0/CPU0:router01(config)#"
+    prompt_pattern: r"RP/\d+/[\w/]+:[\w\-\.]+(\([\w\-]+\))?[#>]\s*$",
     // "RP/0/RSP0/CPU0:router01#"
     privileged_prompt_pattern: r"RP/\d+/[\w/]+:[\w\-\.]+#\s*$",
     // "RP/0/RSP0/CPU0:router01(config)#"
@@ -71,8 +71,8 @@ const CISCO_IOS_XR: DeviceProfile = DeviceProfile {
 const CISCO_NXOS: DeviceProfile = DeviceProfile {
     kind: DeviceKind::CiscoNxos,
     name: "Cisco NX-OS",
-    // "nxos-sw01#" or "nxos-sw01>"
-    prompt_pattern: r"[\w\-\.]+[#>]\s*$",
+    // "nxos-sw01#", "nxos-sw01>", "nxos-sw01(config)#", "nxos-sw01(config-if)#"
+    prompt_pattern: r"[\w\-\.]+(\([\w\-]+\))?[#>]\s*$",
     // "nxos-sw01#"
     privileged_prompt_pattern: r"[\w\-\.]+#\s*$",
     // "nxos-sw01(config)#" or "nxos-sw01(config-if)#"
@@ -87,8 +87,8 @@ const CISCO_NXOS: DeviceProfile = DeviceProfile {
 const CISCO_ASA: DeviceProfile = DeviceProfile {
     kind: DeviceKind::CiscoAsa,
     name: "Cisco ASA",
-    // "ciscoasa>" or "ciscoasa#" or "fw01>"
-    prompt_pattern: r"[\w\-\.]+[#>]\s*$",
+    // "ciscoasa>", "ciscoasa#", "fw01>", "ciscoasa(config)#"
+    prompt_pattern: r"[\w\-\.]+(\([\w\-]+\))?[#>]\s*$",
     // "ciscoasa#"
     privileged_prompt_pattern: r"[\w\-\.]+#\s*$",
     // "ciscoasa(config)#" or "ciscoasa(config-if)#"
@@ -135,8 +135,8 @@ const JUNIPER_JUNOS: DeviceProfile = DeviceProfile {
 const ARISTA_EOS: DeviceProfile = DeviceProfile {
     kind: DeviceKind::AristaEos,
     name: "Arista EOS",
-    // "eos-sw01#" or "eos-sw01>"
-    prompt_pattern: r"[\w\-\.]+[#>]\s*$",
+    // "eos-sw01#", "eos-sw01>", "eos-sw01(config)#", "eos-sw01(config-if)#"
+    prompt_pattern: r"[\w\-\.]+(\([\w\-]+\))?[#>]\s*$",
     // "eos-sw01#"
     privileged_prompt_pattern: r"[\w\-\.]+#\s*$",
     // "eos-sw01(config)#" or "eos-sw01(config-if)#"
@@ -183,8 +183,8 @@ const MIKROTIK_ROS: DeviceProfile = DeviceProfile {
 const ARUBA_AOS: DeviceProfile = DeviceProfile {
     kind: DeviceKind::ArubaAos,
     name: "Aruba AOS-CX",
-    // "dev07#" or "dev07>"
-    prompt_pattern: r"[\w\-\.]+[#>]\s*$",
+    // "dev07#", "dev07>", "dev07(config)#", "dev07(config-if)#"
+    prompt_pattern: r"[\w\-\.]+(\([\w\-]+\))?[#>]\s*$",
     // "dev07#"
     privileged_prompt_pattern: r"[\w\-\.]+#\s*$",
     // "dev07(config)#"
@@ -364,6 +364,8 @@ mod tests {
         assert!(re.is_match("dev01#"));
         assert!(re.is_match("router.lab>"));
         assert!(re.is_match("sw-core01#"));
+        assert!(re.is_match("router01(config)#"));
+        assert!(re.is_match("sw-core01(config-if)#"));
         assert!(!re.is_match(""));
         assert!(!re.is_match("not a prompt"));
     }
@@ -374,6 +376,7 @@ mod tests {
         let re = p.prompt_regex();
         assert!(re.is_match("RP/0/RSP0/CPU0:router01#"));
         assert!(re.is_match("RP/0/RSP0/CPU0:router01>"));
+        assert!(re.is_match("RP/0/RSP0/CPU0:router01(config)#"));
         assert!(!re.is_match("dev01#"));
     }
 
@@ -394,6 +397,10 @@ mod tests {
         assert!(re.is_match("router01(config)#"));
         assert!(re.is_match("sw-01(config-if)#"));
         assert!(!re.is_match("router01#"));
+        // prompt_regex must also match config prompts so sessions don't hang
+        let prompt_re = p.prompt_regex();
+        assert!(prompt_re.is_match("router01(config)#"));
+        assert!(prompt_re.is_match("sw-01(config-if)#"));
     }
 
     #[test]
@@ -427,6 +434,8 @@ mod tests {
         assert!(re.is_match("dev07#"));
         assert!(re.is_match("switch01>"));
         assert!(re.is_match("core-sw.lab#"));
+        assert!(re.is_match("dev07(config)#"));
+        assert!(re.is_match("dev07(config-if)#"));
         assert!(!re.is_match(""));
         assert!(!re.is_match("not a prompt"));
     }
