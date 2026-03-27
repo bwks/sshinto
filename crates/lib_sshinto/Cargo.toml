@@ -10,3 +10,4 @@ tokio = { version = "1", features = ["net", "time", "rt", "io-util", "fs"] }
 thiserror = "2"
 log = "0.4"
 regex = "1"
+russh-sftp = "2.1.1"

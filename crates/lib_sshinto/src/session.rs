@@ -8,6 +8,9 @@ use russh::client::{self, Msg};
 use russh::keys::ssh_key::HashAlg;
 use russh::keys::{PrivateKeyWithHashAlg, decode_secret_key};
 use russh::{ChannelMsg, Disconnect};
+use russh_sftp::client::SftpSession;
+use russh_sftp::protocol::OpenFlags;
+use tokio::io::AsyncWriteExt;
 use tokio::time::timeout;
 
 use crate::error::{Result, SshintoError};
@@ -263,11 +266,76 @@ impl Connection {
         })
     }
 
-    /// Upload a local file to `remote_path` on the device using the SCP sink protocol.
+    /// Upload a local file to `remote_path` on the device.
+    ///
+    /// Tries SFTP first (supported by most modern SSH servers including Linux
+    /// hosts that may not have the `scp` binary installed). Falls back to the
+    /// legacy SCP sink protocol for devices that expose SCP but not SFTP
+    /// (e.g. some Cisco IOS-XR configurations).
+    pub async fn upload_file(
+        &self,
+        local_path: &Path,
+        remote_path: &str,
+        timeout_dur: Duration,
+    ) -> Result<()> {
+        match self.upload_file_sftp(local_path, remote_path, timeout_dur).await {
+            Ok(()) => return Ok(()),
+            Err(_) => {}
+        }
+        self.upload_file_scp(local_path, remote_path, timeout_dur).await
+    }
+
+    /// Upload using the SFTP subsystem.
+    async fn upload_file_sftp(
+        &self,
+        local_path: &Path,
+        remote_path: &str,
+        timeout_dur: Duration,
+    ) -> Result<()> {
+        let expanded = expand_tilde(&local_path.to_string_lossy());
+        let local = Path::new(&expanded);
+        let contents = tokio::fs::read(local)
+            .await
+            .map_err(|e| SshintoError::ScpError(format!("cannot read {}: {e}", local.display())))?;
+
+        let channel = timeout(timeout_dur, self.handle.channel_open_session())
+            .await
+            .map_err(|_| SshintoError::Timeout)?
+            .map_err(SshintoError::Ssh)?;
+
+        timeout(timeout_dur, channel.request_subsystem(true, "sftp"))
+            .await
+            .map_err(|_| SshintoError::Timeout)?
+            .map_err(SshintoError::Ssh)?;
+
+        let sftp = SftpSession::new(channel.into_stream())
+            .await
+            .map_err(|e| SshintoError::ScpError(e.to_string()))?;
+
+        let mut file = sftp
+            .open_with_flags(
+                remote_path,
+                OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
+            )
+            .await
+            .map_err(|e| SshintoError::ScpError(e.to_string()))?;
+
+        file.write_all(&contents)
+            .await
+            .map_err(|e| SshintoError::ScpError(e.to_string()))?;
+
+        file.shutdown()
+            .await
+            .map_err(|e| SshintoError::ScpError(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// Upload using the legacy SCP sink protocol (`scp -t`).
     ///
     /// Opens a new exec channel for each call so this can be used before or after
     /// a shell channel is open (some devices only allow one channel at a time).
-    pub async fn upload_file(
+    async fn upload_file_scp(
         &self,
         local_path: &Path,
         remote_path: &str,
