@@ -15,8 +15,14 @@ All cases in `common.md` must pass in addition to the cases below.
 | Show version (TC-COMMON-002) | `show system info` |
 | Multi-command pair (TC-COMMON-003) | `show system info` + `show interface all` |
 | Long output — paging test (TC-COMMON-005) | `show running security-policy` |
-| File presence check after SCP (TC-COMMON-004) | `show system files` |
+| File presence check after SCP (TC-COMMON-004) | **N/A** — see note below |
 | Invalid command (TC-COMMON-006) | `sshinto_invalid_command_xyz` |
+
+**TC-COMMON-004 note:** PAN-OS CLISH only supports device-initiated file
+transfer (`scp import`/`scp export` commands issued from the device to a
+remote server). The SSH subsystem does not accept `scp -t` (SCP sink mode)
+from an external client, and the SFTP subsystem is not accessible for regular
+users. TC-COMMON-004 is therefore **not applicable** to `palo_alto_panos`.
 
 ---
 

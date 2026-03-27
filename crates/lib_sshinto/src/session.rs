@@ -39,8 +39,12 @@ pub struct ConnectConfig {
 impl Default for ConnectConfig {
     fn default() -> Self {
         Self {
-            timeout: Duration::from_secs(10),
-            term: "xterm".into(),
+            timeout: Duration::from_secs(30),
+            // "dumb" prevents interactive terminal applications (e.g. PAN-OS CLISH)
+            // from enabling character-by-character echo with line-editing control
+            // sequences (\r\x1b[K redraws). Those sequences cause false prompt
+            // matches in read_until_prompt_re and contaminate command output.
+            term: "dumb".into(),
             cols: 200,
             rows: 48,
             legacy_crypto: false,
@@ -135,6 +139,17 @@ async fn authenticate(
                     KeyboardInteractiveAuthResponse::Failure { .. } => break,
                     KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
                         let responses = vec![password.clone(); prompts.len()];
+                        // Yield to the tokio runtime so that russh's internal
+                        // client-handler task can finish processing the
+                        // InfoRequest packet before we send the response.
+                        // A single yield_now() is not enough on fast schedulers;
+                        // several yields are more reliable without adding latency
+                        // that could exceed the device's response deadline
+                        // (Cisco FTD has a tight window for keyboard-interactive).
+                        for _ in 0..10 {
+                            tokio::task::yield_now().await;
+                        }
+
                         ki = timeout(
                             timeout_dur,
                             handle.authenticate_keyboard_interactive_respond(responses),
@@ -343,8 +358,9 @@ impl Connection {
             .map_err(|_| SshintoError::Timeout)?
             .map_err(SshintoError::Ssh)?;
 
-        let sftp = SftpSession::new(channel.into_stream())
+        let sftp = timeout(timeout_dur, SftpSession::new(channel.into_stream()))
             .await
+            .map_err(|_| SshintoError::ScpError("SFTP session init timed out".into()))?
             .map_err(|e| SshintoError::ScpError(e.to_string()))?;
 
         let mut file = sftp
@@ -540,15 +556,13 @@ impl Session {
                 match self.reader.wait().await {
                     Some(ChannelMsg::Data { data }) => {
                         buffer.push_str(&String::from_utf8_lossy(&data));
-                        let clean = strip_ansi(&buffer);
-                        if prompt_re.is_match(clean.trim_end()) {
+                        if prompt_visible(&buffer, prompt_re) {
                             return Ok(buffer);
                         }
                     }
                     Some(ChannelMsg::ExtendedData { data, .. }) => {
                         buffer.push_str(&String::from_utf8_lossy(&data));
-                        let clean = strip_ansi(&buffer);
-                        if prompt_re.is_match(clean.trim_end()) {
+                        if prompt_visible(&buffer, prompt_re) {
                             return Ok(buffer);
                         }
                     }
@@ -729,6 +743,25 @@ async fn drain_initial(reader: &mut russh::ChannelReadHalf, wait: Duration) -> S
     })
     .await;
     buffer
+}
+
+/// Check whether a stable prompt is visible at the end of `buf`.
+///
+/// Strips ANSI escape sequences, then examines the *visible* last line.
+/// A carriage return (`\r`) without a following newline means the device is
+/// overwriting the current line (e.g. PAN-OS character-by-character echo).
+/// Only the text after the final `\r` on the last `\n`-terminated segment is
+/// matched against the regex, so intermediate echo redraws do not trigger a
+/// false-positive match.
+fn prompt_visible(buf: &str, prompt_re: &Regex) -> bool {
+    let clean = strip_ansi(buf);
+    // Last \n-delimited segment (may be empty if buf ends with \n).
+    let last_segment = clean.split('\n').next_back().unwrap_or("");
+    // Within that segment, take only what follows the last \r — this is the
+    // text that is visually on screen after all overwrite redraws.
+    let visible = last_segment.split('\r').next_back().unwrap_or("");
+    let visible = visible.trim_end();
+    !visible.is_empty() && prompt_re.is_match(visible)
 }
 
 /// Strip ANSI escape sequences (CSI sequences) so prompt regexes can match cleanly.
