@@ -18,11 +18,20 @@ All cases in `common.md` must pass in addition to the cases below.
 | File presence check after SCP (TC-COMMON-004) | **N/A** — see note below |
 | Invalid command (TC-COMMON-006) | `sshinto_invalid_command_xyz` |
 
-**TC-COMMON-004 note:** PAN-OS CLISH only supports device-initiated file
-transfer (`scp import`/`scp export` commands issued from the device to a
-remote server). The SSH subsystem does not accept `scp -t` (SCP sink mode)
-from an external client, and the SFTP subsystem is not accessible for regular
-users. TC-COMMON-004 is therefore **not applicable** to `palo_alto_panos`.
+**TC-COMMON-004 note:** PAN-OS supports inbound SCP via the legacy `scp -t`
+protocol, but only for a dedicated SCP user (e.g. `scp_admin`) whose SSH
+session is handled by PAN-OS's SCP subsystem rather than CLISH. The regular
+admin account (`sherpa`) connects to CLISH and cannot accept `scp -t` commands.
+
+To run TC-COMMON-004 on PAN-OS:
+1. Create an SCP-enabled user on the device (Device → Administrators → add
+   user with "Custom Panorama Admin" role and SCP access, or use the built-in
+   `scp_admin` role).
+2. Run `sshinto scp` as that user (e.g. `-U scp_admin -P <pass>`).
+3. Verify presence using `sshinto run -c 'show system files'`.
+
+The `base_path` for `palo_alto_panos` is `/scp/config/`, matching the path
+prefix required by PAN-OS's SCP subsystem.
 
 ---
 

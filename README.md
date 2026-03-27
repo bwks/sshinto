@@ -279,7 +279,7 @@ sshinto job ./upgrade.toml -o output
 - `nokia_srlinux` — Nokia SR Linux
 - `mikrotik_ros` — MikroTik RouterOS
 - `aruba_aos` — Aruba AOS-CX
-- `palo_alto_panos` — Palo Alto PAN-OS; file upload via `sshinto scp` is not supported (PAN-OS does not accept inbound SCP/SFTP from external clients)
+- `palo_alto_panos` — Palo Alto PAN-OS; file upload via `sshinto scp` requires a dedicated SCP user (not the admin CLISH account) and the path `/scp/config/<file>`
 - `cumulus_linux` — Cumulus Linux (supports VRF-qualified prompts such as `user@switch:mgmt:~$`)
 - `sonic_linux` — SONiC Linux
 - `linux` — FRRouting or any other standard Linux/BSD host

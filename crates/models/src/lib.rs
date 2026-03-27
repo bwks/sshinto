@@ -209,7 +209,9 @@ const PALO_ALTO_PANOS: DeviceProfile = DeviceProfile {
     line_separator: "\n",
     exit_config_command: "exit",
     enable_command: "",
-    base_path: "/tmp/",
+    // PAN-OS SCP upload uses /scp/config/ path; requires an account with SCP
+    // access (e.g. a dedicated scp_admin user or an account with scp privilege).
+    base_path: "/scp/config/",
 };
 
 const LINUX: DeviceProfile = DeviceProfile {
