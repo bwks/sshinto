@@ -15,7 +15,7 @@ All cases in `common.md` must pass in addition to the cases below.
 | Show version (TC-COMMON-002) | `show version` |
 | Multi-command pair (TC-COMMON-003) | `show version` + `show interfaces brief` |
 | Long output — paging test (TC-COMMON-005) | `show running-config` |
-| File presence check after SCP (TC-COMMON-004) | `dir disk0:` |
+| File presence check after SCP (TC-COMMON-004) | `dir disk0:` (file lands at `/disk0:/`) |
 | Invalid command (TC-COMMON-006) | `sshinto_invalid_command_xyz` |
 
 ---

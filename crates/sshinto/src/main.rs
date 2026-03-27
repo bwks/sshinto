@@ -157,19 +157,30 @@ async fn run(args: ResolvedArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     eprintln!("Connected.");
 
-    // Drain leftover output and get to a clean prompt
+    // Two-round drain to reach a clean prompt. The first round clears any
+    // initial banner or MOTD (it may time out — that is OK). The second
+    // round forces a fresh prompt response from the device, so
+    // read_until_prompt_re will consume any data still in-flight (e.g.
+    // a MikroTik MOTD that arrives after the first prompt) before
+    // matching the new prompt, leaving the session in a clean state.
     let _ = session.write(b"\n").await;
     let _ = session
-        .read_until_prompt_re(&prompt_re, Duration::from_secs(3))
+        .read_until_prompt_re(&prompt_re, Duration::from_secs(5))
+        .await;
+    let _ = session.write(b"\n").await;
+    let _ = session
+        .read_until_prompt_re(&prompt_re, Duration::from_secs(5))
         .await;
 
-    // Disable paging
-    match session
-        .send_command_re(profile.paging_disable, &prompt_re, Duration::from_secs(5))
-        .await
-    {
-        Ok(_) => eprintln!("Paging disabled."),
-        Err(e) => eprintln!("Warning: could not disable paging: {e}"),
+    // Disable paging (skip if the device profile has no paging command)
+    if !profile.paging_disable.is_empty() {
+        match session
+            .send_command_re(profile.paging_disable, &prompt_re, Duration::from_secs(5))
+            .await
+        {
+            Ok(_) => eprintln!("Paging disabled."),
+            Err(e) => eprintln!("Warning: could not disable paging: {e}"),
+        }
     }
 
     let mut buf = String::new();

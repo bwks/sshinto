@@ -12,7 +12,14 @@ pub fn strip_command_output(raw: &str, command: &str, prompt_re: &Regex) -> Stri
         let first_line_raw = text[..idx].trim_end_matches('\r');
         let first_line_clean = crate::session::strip_ansi(first_line_raw);
         let first_line = first_line_clean.trim_start_matches('\r').trim();
-        if first_line == command.trim() {
+        // Normal echo: first line equals the command exactly.
+        // Wide-terminal echo (e.g. MikroTik at 200 cols): the device pads the
+        // line to terminal width and appends the prompt + command again, so the
+        // line starts and ends with the command text.
+        let cmd = command.trim();
+        let is_echo = first_line == cmd
+            || (first_line.starts_with(cmd) && first_line.ends_with(cmd) && first_line.len() > cmd.len());
+        if is_echo {
             text = &text[idx + 1..];
         }
     }

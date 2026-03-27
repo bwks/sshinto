@@ -9,11 +9,14 @@ pub enum DeviceKind {
     CiscoIos,
     CiscoIosxr,
     CiscoNxos,
+    CiscoAsa,
+    CiscoFtd,
     JuniperJunos,
     AristaEos,
     NokiaSrlinux,
     MikrotikRos,
     ArubaAos,
+    PaloAltoPanos,
     Linux,
     CumulusLinux,
     SonicLinux,
@@ -62,7 +65,7 @@ const CISCO_IOS_XR: DeviceProfile = DeviceProfile {
     line_separator: "\n",
     exit_config_command: "end",
     enable_command: "",
-    base_path: "disk0:",
+    base_path: "/disk0:/",
 };
 
 const CISCO_NXOS: DeviceProfile = DeviceProfile {
@@ -79,6 +82,38 @@ const CISCO_NXOS: DeviceProfile = DeviceProfile {
     exit_config_command: "end",
     enable_command: "",
     base_path: "bootflash:",
+};
+
+const CISCO_ASA: DeviceProfile = DeviceProfile {
+    kind: DeviceKind::CiscoAsa,
+    name: "Cisco ASA",
+    // "ciscoasa>" or "ciscoasa#" or "fw01>"
+    prompt_pattern: r"[\w\-\.]+[#>]\s*$",
+    // "ciscoasa#"
+    privileged_prompt_pattern: r"[\w\-\.]+#\s*$",
+    // "ciscoasa(config)#" or "ciscoasa(config-if)#"
+    config_prompt_pattern: r"[\w\-\.]+\([\w\-]+\)#\s*$",
+    paging_disable: "terminal pager 0",
+    line_separator: "\n",
+    exit_config_command: "end",
+    enable_command: "enable",
+    base_path: "disk0:",
+};
+
+const CISCO_FTD: DeviceProfile = DeviceProfile {
+    kind: DeviceKind::CiscoFtd,
+    name: "Cisco FTD",
+    // "firepower> " — FTD CLISH prompt; hostname part is optional in some versions
+    prompt_pattern: r"[\w\-\.]*>\s*$",
+    // No separate privileged mode in FTD CLISH
+    privileged_prompt_pattern: r"[\w\-\.]*>\s*$",
+    // No separate config mode in FTD CLISH
+    config_prompt_pattern: r"[\w\-\.]*>\s*$",
+    paging_disable: "",
+    line_separator: "\n",
+    exit_config_command: "",
+    enable_command: "",
+    base_path: "/ngfw/var/common/",
 };
 
 const JUNIPER_JUNOS: DeviceProfile = DeviceProfile {
@@ -161,6 +196,22 @@ const ARUBA_AOS: DeviceProfile = DeviceProfile {
     base_path: "/tmp/",
 };
 
+const PALO_ALTO_PANOS: DeviceProfile = DeviceProfile {
+    kind: DeviceKind::PaloAltoPanos,
+    name: "Palo Alto PAN-OS",
+    // "admin@PA-VM>" (operational) or "admin@PA-VM#" (configure)
+    prompt_pattern: r"[\w\-\.@]+[#>]\s*$",
+    // Operational mode — already privileged, no enable needed
+    privileged_prompt_pattern: r"[\w\-\.@]+>\s*$",
+    // "admin@PA-VM#" — configure mode
+    config_prompt_pattern: r"[\w\-\.@]+#\s*$",
+    paging_disable: "set cli pager off",
+    line_separator: "\n",
+    exit_config_command: "exit",
+    enable_command: "",
+    base_path: "/tmp/",
+};
+
 const LINUX: DeviceProfile = DeviceProfile {
     kind: DeviceKind::Linux,
     name: "Linux",
@@ -214,11 +265,14 @@ impl DeviceKind {
             DeviceKind::CiscoIos => &CISCO_IOS,
             DeviceKind::CiscoIosxr => &CISCO_IOS_XR,
             DeviceKind::CiscoNxos => &CISCO_NXOS,
+            DeviceKind::CiscoAsa => &CISCO_ASA,
+            DeviceKind::CiscoFtd => &CISCO_FTD,
             DeviceKind::JuniperJunos => &JUNIPER_JUNOS,
             DeviceKind::AristaEos => &ARISTA_EOS,
             DeviceKind::NokiaSrlinux => &NOKIA_SRLINUX,
             DeviceKind::MikrotikRos => &MIKROTIK_ROS,
             DeviceKind::ArubaAos => &ARUBA_AOS,
+            DeviceKind::PaloAltoPanos => &PALO_ALTO_PANOS,
             DeviceKind::Linux => &LINUX,
             DeviceKind::CumulusLinux => &CUMULUS_LINUX,
             DeviceKind::SonicLinux => &SONIC_LINUX,
@@ -239,15 +293,18 @@ impl DeviceProfile {
 mod tests {
     use super::*;
 
-    const ALL_KINDS: [DeviceKind; 11] = [
+    const ALL_KINDS: [DeviceKind; 14] = [
         DeviceKind::CiscoIos,
         DeviceKind::CiscoIosxr,
         DeviceKind::CiscoNxos,
+        DeviceKind::CiscoAsa,
+        DeviceKind::CiscoFtd,
         DeviceKind::JuniperJunos,
         DeviceKind::AristaEos,
         DeviceKind::NokiaSrlinux,
         DeviceKind::MikrotikRos,
         DeviceKind::ArubaAos,
+        DeviceKind::PaloAltoPanos,
         DeviceKind::Linux,
         DeviceKind::CumulusLinux,
         DeviceKind::SonicLinux,
@@ -259,6 +316,8 @@ mod tests {
             (DeviceKind::CiscoIos, "Cisco IOS", "terminal length 0"),
             (DeviceKind::CiscoIosxr, "Cisco IOS-XR", "terminal length 0"),
             (DeviceKind::CiscoNxos, "Cisco NX-OS", "terminal length 0"),
+            (DeviceKind::CiscoAsa, "Cisco ASA", "terminal pager 0"),
+            (DeviceKind::CiscoFtd, "Cisco FTD", ""),
             (
                 DeviceKind::JuniperJunos,
                 "Juniper JUNOS",
@@ -276,6 +335,7 @@ mod tests {
                 "",
             ),
             (DeviceKind::ArubaAos, "Aruba AOS-CX", "no page"),
+            (DeviceKind::PaloAltoPanos, "Palo Alto PAN-OS", "set cli pager off"),
             (DeviceKind::Linux, "Linux", ""),
             (DeviceKind::CumulusLinux, "Cumulus Linux", ""),
             (DeviceKind::SonicLinux, "SONiC Linux", ""),
@@ -403,6 +463,49 @@ mod tests {
         assert!(re.is_match("sherpa@dev22:~$"));
         assert!(re.is_match("admin@sonic-switch:~$"));
         assert!(re.is_match("root@sonic:/tmp#"));
+        assert!(!re.is_match(""));
+        assert!(!re.is_match("not a prompt"));
+    }
+
+    #[test]
+    fn cisco_asa_prompt_matches() {
+        let p = DeviceKind::CiscoAsa.profile();
+        let re = p.prompt_regex();
+        assert!(re.is_match("ciscoasa>"));
+        assert!(re.is_match("ciscoasa#"));
+        assert!(re.is_match("fw01>"));
+        assert!(re.is_match("fw-edge.lab#"));
+        assert!(!re.is_match(""));
+        assert!(!re.is_match("not a prompt"));
+    }
+
+    #[test]
+    fn cisco_asa_config_prompt_matches() {
+        let p = DeviceKind::CiscoAsa.profile();
+        let re = Regex::new(p.config_prompt_pattern).unwrap();
+        assert!(re.is_match("ciscoasa(config)#"));
+        assert!(re.is_match("ciscoasa(config-if)#"));
+        assert!(!re.is_match("ciscoasa#"));
+    }
+
+    #[test]
+    fn cisco_ftd_prompt_matches() {
+        let p = DeviceKind::CiscoFtd.profile();
+        let re = p.prompt_regex();
+        assert!(re.is_match("firepower>"));
+        assert!(re.is_match(">"));
+        assert!(re.is_match("> "));
+        assert!(!re.is_match(""));
+        assert!(!re.is_match("not a prompt"));
+    }
+
+    #[test]
+    fn palo_alto_panos_prompt_matches() {
+        let p = DeviceKind::PaloAltoPanos.profile();
+        let re = p.prompt_regex();
+        assert!(re.is_match("admin@PA-VM>"));
+        assert!(re.is_match("admin@fw-lab>"));
+        assert!(re.is_match("admin@PA-VM#"));
         assert!(!re.is_match(""));
         assert!(!re.is_match("not a prompt"));
     }

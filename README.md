@@ -268,11 +268,14 @@ sshinto job ./upgrade.toml -o output
 - `cisco_ios` — Cisco IOS and IOS-XE
 - `cisco_iosxr` — Cisco IOS-XR
 - `cisco_nxos` — Cisco NX-OS
+- `cisco_asa` — Cisco ASA OS
+- `cisco_ftd` — Cisco Firepower Threat Defense (FTD CLISH)
 - `juniper_junos` — Juniper JunOS
 - `arista_eos` — Arista EOS
 - `nokia_srlinux` — Nokia SR Linux
 - `mikrotik_ros` — MikroTik RouterOS
 - `aruba_aos` — Aruba AOS-CX
+- `palo_alto_panos` — Palo Alto PAN-OS
 - `cumulus_linux` — Cumulus Linux (supports VRF-qualified prompts such as `user@switch:mgmt:~$`)
 - `sonic_linux` — SONiC Linux
 - `linux` — FRRouting or any other standard Linux/BSD host
